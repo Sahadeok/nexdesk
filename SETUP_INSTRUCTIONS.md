@@ -61,6 +61,12 @@ git commit -m "Phase 1: NexDesk login page complete"
 git branch -M main
 git remote add origin https://github.com/Sahadeok/nexdesk.git
 git push -u origin main
+
+git config --global user.email "sahadeok@gmail.com"
+git config --global user.name "Sahadeok"
+
+
+## tonek git- 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
 ```
 
 ---
