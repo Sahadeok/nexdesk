@@ -1,229 +1,156 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient, getProfile } from '../../../lib/supabase'
-import Topbar from '../../components/TopBar'
-
-const PC = { critical:'#ef4444', high:'#f59e0b', medium:'#3b82f6', low:'#10b981' }
-
-function ago(d) {
-  const diff = Date.now() - new Date(d)
-  const m = Math.floor(diff/60000), h = Math.floor(m/60), dy = Math.floor(h/24)
-  return dy>0 ? dy+'d ago' : h>0 ? h+'h ago' : m>0 ? m+'m ago' : 'just now'
-}
-
-function PriorityBadge({ p }) {
-  const labels = { critical:'🔴 P1 — Critical', high:'🟡 P2 — High', medium:'🟢 P3 — Medium', low:'⚪ P4 — Low' }
-  return (
-    <span style={{ fontSize:11, padding:'3px 10px', borderRadius:20, background:PC[p]+'20', color:PC[p], fontWeight:700, border:`1px solid ${PC[p]}40` }}>
-      {labels[p] || p}
-    </span>
-  )
-}
+import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
+import { STATUS_CONFIG, PRIORITY_CONFIG, getSLAStatus } from '../../../lib/ticketRouter'
 
 export default function DeveloperDashboard() {
   const router = useRouter()
+  const supabase = createClient()
   const [profile, setProfile] = useState(null)
   const [tickets, setTickets] = useState([])
+  const [filter, setFilter] = useState('all')
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter]   = useState('active')
 
-  useEffect(() => {
-    async function load() {
-      const sb = createClient()
-      const { data: { user } } = await sb.auth.getUser()
-      if (!user) { router.replace('/login'); return }
-      const p = await getProfile(sb, user.id)
-      setProfile(p)
-      if (p?.role_code === 'END_USER') { router.replace('/dashboard/user'); return }
-      const { data } = await sb.from('tickets')
-        .select('*')
-        .or('assigned_team.eq.DEVELOPER,is_code_bug.eq.true')
-        .eq('is_deleted', false)
-        .order('created_at', { ascending: false })
-      setTickets(data || [])
-      setLoading(false)
-    }
-    load()
-  }, [])
+  useEffect(() => { init() }, [])
 
-  const active   = tickets.filter(t => !['resolved','closed'].includes(t.status))
-  const resolved = tickets.filter(t =>  ['resolved','closed'].includes(t.status))
-  const filtered = filter === 'active' ? active : resolved
-
-  async function updateStatus(id, status) {
-    const sb = createClient()
-    const { data: { user } } = await sb.auth.getUser()
-    await sb.from('tickets').update({ status, updated_at: new Date().toISOString(), ...(status==='resolved'?{resolved_at:new Date().toISOString()}:{}) }).eq('id', id)
-    await sb.from('ticket_history').insert({ ticket_id:id, changed_by:user.id, action:'Developer: Status Updated', new_value:status })
-    setTickets(prev => prev.map(t => t.id===id ? {...t, status} : t))
+  async function init() {
+    const { user, profile: p } = await getCurrentUserProfile(supabase)
+    if (!user) { router.replace('/login'); return }
+    setProfile(p)
+    await loadTickets()
+    setLoading(false)
   }
 
+  async function loadTickets() {
+    const { data } = await supabase
+      .from('tickets')
+      .select('*, categories(name,icon), profiles!tickets_created_by_fkey(full_name,email)')
+      .eq('assigned_team', 'DEVELOPER')
+      .not('status', 'in', '(resolved,closed)')
+      .order('created_at', { ascending: false })
+    if (data) setTickets(data)
+  }
+
+  const filtered = filter === 'all' ? tickets : tickets.filter(t => {
+    if (filter === 'critical') return t.priority === 'critical'
+    if (filter === 'high')     return t.priority === 'high'
+    return t.status === filter
+  })
+
+  const stats = {
+    total:    tickets.length,
+    critical: tickets.filter(t => t.priority === 'critical').length,
+    high:     tickets.filter(t => t.priority === 'high').length,
+    breached: tickets.filter(t => { const s = getSLAStatus(t.sla_resolve_due, t.status); return s.label === 'BREACHED' }).length,
+  }
+
+  if (loading) return <Loader />
+
   return (
-    <>
+    <div style={{ minHeight:'100vh', background:'#0a0e1a', fontFamily:"'DM Sans',sans-serif", color:'#e2e8f0' }}>
       <style>{`
-        *{box-sizing:border-box}body{margin:0}
-        @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .tcard{background:#111827;border:1px solid #1f2d45;border-radius:14px;padding:20px;transition:all 0.2s;animation:fadeUp 0.3s ease both}
-        .tcard:hover{border-color:rgba(245,158,11,0.4);transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,0.3)}
-        .ftab{padding:7px 16px;border-radius:8px;border:1px solid transparent;background:transparent;color:#64748b;font-family:'DM Sans',sans-serif;font-size:13px;cursor:pointer;transition:all 0.2s}
-        .ftab.on{background:rgba(245,158,11,0.1);color:#f59e0b;border-color:rgba(245,158,11,0.3)}
-        .abtn{padding:7px 14px;border-radius:8px;border:1px solid;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.2s}
-        .abtn:hover{transform:translateY(-1px)}
-        .code-block{background:#0f172a;border:1px solid #1f2d45;border-radius:8px;padding:12px 14px;font-family:'Consolas',monospace;font-size:12px;color:#94a3b8;overflow-x:auto;white-space:pre-wrap;word-break:break-word;line-height:1.6}
+        @keyframes fadeUp { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes spin   { to{transform:rotate(360deg)} }
+        .trow:hover { background:#0f172a!important; cursor:pointer; }
+        .fchip:hover { opacity:0.8!important; }
       `}</style>
 
-      <div style={{ minHeight:'100vh', background:'#0a0e1a', fontFamily:"'DM Sans',sans-serif", color:'#e2e8f0' }}>
-        <Topbar profile={profile} title="Developer Queue" subtitle="Code bugs, API issues, technical fixes" />
+      <div style={{ background:'#111827', borderBottom:'1px solid #1f2d45', padding:'0 28px', height:60, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:100 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <div style={{ width:34, height:34, borderRadius:9, background:'linear-gradient(135deg,#3b82f6,#06b6d4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>⚡</div>
+          <span style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:800 }}>Nex<span style={{ color:'#06b6d4' }}>Desk</span></span>
+          <span style={{ color:'#334155', margin:'0 6px' }}>›</span>
+          <span style={{ color:'#64748b', fontSize:14 }}>Developer Queue</span>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ padding:'4px 10px', borderRadius:6, fontSize:11, fontWeight:600, background:'#083344', color:'#06b6d4', border:'1px solid #06b6d440' }}>DEVELOPER</span>
+          <span style={{ fontSize:13, color:'#64748b' }}>{profile?.email}</span>
+          <button onClick={async () => { await supabase.auth.signOut(); router.replace('/login') }} style={{ background:'transparent', border:'1px solid #1f2d45', color:'#64748b', padding:'6px 14px', borderRadius:8, cursor:'pointer', fontSize:12 }}>Sign Out</button>
+        </div>
+      </div>
 
-        <div style={{ maxWidth:1000, margin:'0 auto', padding:'28px 20px' }}>
+      <div style={{ maxWidth:1200, margin:'0 auto', padding:'28px 24px' }}>
+        <div style={{ marginBottom:24, animation:'fadeUp 0.4s ease' }}>
+          <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:24, fontWeight:800, marginBottom:4 }}>Developer Queue 👨‍💻</h1>
+          <p style={{ color:'#64748b', fontSize:14 }}>Code bugs, API fixes & database issues assigned to your team</p>
+        </div>
 
-          {/* Stats */}
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:24 }}>
-            {[
-              ['All Dev Tickets', tickets.length,        '🐛', '#f59e0b'],
-              ['Active / Open',   active.length,         '⚡', '#ef4444'],
-              ['P1 Critical',     tickets.filter(t=>t.priority==='critical').length, '🔴', '#ef4444'],
-              ['Resolved',        resolved.length,       '✅', '#10b981'],
-            ].map(([l,v,ic,c],i) => (
-              <div key={l} style={{ background:'#111827', border:'1px solid #1f2d45', borderTop:`3px solid ${c}`, borderRadius:14, padding:'16px 18px', position:'relative', overflow:'hidden', animation:`fadeUp 0.4s ease ${i*0.08}s both` }}>
-                <div style={{ fontSize:10, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.5px' }}>{l}</div>
-                <div style={{ fontFamily:"'Syne',sans-serif", fontSize:26, fontWeight:800, color:c, marginTop:6 }}>{loading?'—':v}</div>
-                <div style={{ position:'absolute', right:12, top:'50%', transform:'translateY(-50%)', fontSize:26, opacity:0.08 }}>{ic}</div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
-            <div style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:700 }}>👨‍💻 Developer Ticket Queue</div>
-            <div style={{ display:'flex', gap:6 }}>
-              {[['active',`Active (${active.length})`],['resolved',`Resolved (${resolved.length})`]].map(([v,l])=>(
-                <button key={v} className={`ftab ${filter===v?'on':''}`} onClick={()=>setFilter(v)}>{l}</button>
-              ))}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:24 }}>
+          {[['👨‍💻','Dev Tickets',stats.total,'#06b6d4','#083344'],['🔴','Critical P1',stats.critical,'#ef4444','#450a0a'],['🟠','High P2',stats.high,'#f97316','#431407'],['⏰','SLA Breached',stats.breached,'#f59e0b','#451a03']].map(([icon,label,val,color,bg],i)=>(
+            <div key={label} style={{ background:'#111827', border:`1px solid ${color}30`, borderRadius:14, padding:'16px 20px', animation:`fadeUp 0.4s ${i*0.06}s ease both` }}>
+              <div style={{ fontSize:20, marginBottom:4 }}>{icon}</div>
+              <div style={{ fontSize:24, fontWeight:700, color, fontFamily:"'Syne',sans-serif" }}>{val}</div>
+              <div style={{ fontSize:11, color:'#64748b', marginTop:1 }}>{label}</div>
             </div>
-          </div>
+          ))}
+        </div>
 
-          {loading ? (
-            <div style={{ textAlign:'center', padding:48 }}>
-              <div style={{ width:36, height:36, borderRadius:'50%', border:'3px solid #1f2d45', borderTopColor:'#f59e0b', animation:'spin 0.7s linear infinite', margin:'0 auto 12px' }}/>
-              <div style={{ color:'#64748b' }}>Loading developer queue...</div>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div style={{ textAlign:'center', padding:56, background:'#111827', borderRadius:14, border:'1px solid #1f2d45' }}>
-              <div style={{ fontSize:48, marginBottom:12 }}>🎉</div>
-              <div style={{ color:'#94a3b8' }}>{filter==='active' ? 'No active code bugs — clean codebase!' : 'No resolved bugs yet'}</div>
+        {stats.critical > 0 && (
+          <div style={{ background:'#450a0a', border:'1px solid #ef444440', borderRadius:10, padding:'12px 16px', marginBottom:18, display:'flex', alignItems:'center', gap:10 }}>
+            <span style={{ fontSize:18 }}>🚨</span>
+            <span style={{ color:'#fca5a5', fontSize:13, fontWeight:500 }}><strong>{stats.critical} CRITICAL P1</strong> code bug{stats.critical>1?'s':''} — requires immediate fix!</span>
+            <button onClick={() => setFilter('critical')} style={{ marginLeft:'auto', background:'#ef4444', border:'none', color:'#fff', padding:'5px 12px', borderRadius:6, cursor:'pointer', fontSize:12, fontWeight:600 }}>View Now →</button>
+          </div>
+        )}
+
+        <div style={{ display:'flex', gap:8, marginBottom:20, flexWrap:'wrap' }}>
+          {[['all','All Tickets'],['in_progress','In Progress'],['critical','🔴 Critical P1'],['high','🟠 High P2']].map(([val,label])=>(
+            <button key={val} className="fchip" onClick={()=>setFilter(val)} style={{ padding:'6px 14px', borderRadius:20, fontSize:12, fontWeight:500, cursor:'pointer', transition:'all 0.2s', border:'1px solid', background:filter===val?'#083344':'transparent', color:filter===val?'#06b6d4':'#64748b', borderColor:filter===val?'#06b6d440':'#1f2d45' }}>{label}</button>
+          ))}
+          <button onClick={loadTickets} style={{ padding:'6px 14px', borderRadius:20, fontSize:12, border:'1px solid #1f2d45', background:'transparent', color:'#475569', cursor:'pointer', marginLeft:'auto' }}>🔄 Refresh</button>
+        </div>
+
+        <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:16, overflow:'hidden' }}>
+          <div style={{ padding:'16px 24px', borderBottom:'1px solid #1f2d45' }}>
+            <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:700 }}>Code Bug Tickets <span style={{ fontSize:13, color:'#475569', fontFamily:"'DM Sans',sans-serif", fontWeight:400 }}>({filtered.length})</span></h2>
+          </div>
+          {filtered.length === 0 ? (
+            <div style={{ padding:56, textAlign:'center' }}>
+              <div style={{ fontSize:44, marginBottom:12 }}>✅</div>
+              <p style={{ color:'#475569', fontSize:15 }}>No tickets in this queue</p>
+              <p style={{ color:'#334155', fontSize:12 }}>All clear! No code bugs assigned to developer team.</p>
             </div>
           ) : (
-            <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-              {filtered.map((t, i) => (
-                <div key={t.id} className="tcard" style={{ animationDelay: i*0.06+'s', borderLeft:`4px solid ${PC[t.priority]||'#f59e0b'}` }}>
-
-                  {/* Header */}
-                  <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:14 }}>
-                    <div style={{ flex:1 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6, flexWrap:'wrap' }}>
-                        <PriorityBadge p={t.priority} />
-                        <span style={{ fontFamily:"'Consolas',monospace", fontSize:12, color:'#64748b' }}>{t.ticket_number}</span>
-                        <span style={{ fontSize:11, color:'#64748b' }}>{ago(t.created_at)}</span>
-                        {t.is_code_bug && (
-                          <span style={{ fontSize:10, padding:'2px 8px', borderRadius:20, background:'rgba(239,68,68,0.1)', color:'#ef4444', border:'1px solid rgba(239,68,68,0.3)', fontWeight:600 }}>
-                            🐛 Code Bug Confirmed
-                          </span>
-                        )}
-                      </div>
-                      <h3 style={{ fontFamily:"'Syne',sans-serif", fontSize:16, fontWeight:700, margin:0, color:'#e2e8f0' }}>{t.title}</h3>
-                    </div>
-                    <span style={{ fontSize:11, padding:'3px 10px', borderRadius:20, background: ['resolved','closed'].includes(t.status)?'rgba(16,185,129,0.1)':'rgba(245,158,11,0.1)', color:['resolved','closed'].includes(t.status)?'#10b981':'#f59e0b', fontWeight:600, whiteSpace:'nowrap', marginLeft:12 }}>
-                      {t.status?.replace('_',' ')}
-                    </span>
-                  </div>
-
-                  {/* Description */}
-                  {t.description && (
-                    <div style={{ marginBottom:14 }}>
-                      <div style={{ fontSize:11, color:'#64748b', fontWeight:600, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.5px' }}>📋 Issue Description</div>
-                      <div style={{ fontSize:13, color:'#94a3b8', lineHeight:1.6, padding:'10px 14px', background:'rgba(255,255,255,0.02)', borderRadius:8, border:'1px solid #1f2d45' }}>
-                        {t.description}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* AI Analysis & Suggestion */}
-                  {t.ai_suggestion && (
-                    <div style={{ marginBottom:14 }}>
-                      <div style={{ fontSize:11, color:'#64748b', fontWeight:600, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.5px' }}>🤖 AI Analysis & Suggested Fix</div>
-                      <div className="code-block">{t.ai_suggestion}</div>
-                    </div>
-                  )}
-
-                  {/* Routing Reason */}
-                  {t.routing_reason && (
-                    <div style={{ marginBottom:14 }}>
-                      <div style={{ fontSize:11, color:'#64748b', fontWeight:600, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.5px' }}>🔍 Why Assigned to Developer</div>
-                      <div style={{ fontSize:12, color:'#94a3b8', padding:'8px 12px', background:'rgba(245,158,11,0.05)', borderRadius:8, border:'1px solid rgba(245,158,11,0.2)' }}>
-                        {t.routing_reason}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* AI Confidence */}
-                  <div style={{ display:'flex', gap:12, marginBottom:14, flexWrap:'wrap' }}>
-                    {t.ai_confidence && (
-                      <div style={{ padding:'6px 12px', background:'rgba(16,185,129,0.08)', borderRadius:8, border:'1px solid rgba(16,185,129,0.2)', fontSize:12 }}>
-                        <span style={{ color:'#64748b' }}>AI Confidence: </span>
-                        <span style={{ color:'#10b981', fontWeight:700 }}>{t.ai_confidence}%</span>
-                      </div>
-                    )}
-                    <div style={{ padding:'6px 12px', background:'rgba(59,130,246,0.08)', borderRadius:8, border:'1px solid rgba(59,130,246,0.2)', fontSize:12 }}>
-                      <span style={{ color:'#64748b' }}>Category: </span>
-                      <span style={{ color:'#3b82f6', fontWeight:600 }}>{t.category_code || 'APP_BUG'}</span>
-                    </div>
-                    {t.sla_resolve_due && (
-                      <div style={{ padding:'6px 12px', background:'rgba(239,68,68,0.08)', borderRadius:8, border:'1px solid rgba(239,68,68,0.2)', fontSize:12 }}>
-                        <span style={{ color:'#64748b' }}>SLA Deadline: </span>
-                        <span style={{ color: new Date(t.sla_resolve_due) < new Date() ? '#ef4444' : '#f59e0b', fontWeight:600 }}>
-                          {new Date(t.sla_resolve_due) < new Date() ? '⚠️ BREACHED' : new Date(t.sla_resolve_due).toLocaleString('en-IN', { timeZone:'Asia/Kolkata', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions */}
-                  {!['resolved','closed'].includes(t.status) && (
-                    <div style={{ display:'flex', gap:8, paddingTop:14, borderTop:'1px solid #1f2d45', flexWrap:'wrap' }}>
-                      {t.status === 'open' && (
-                        <button className="abtn" onClick={() => updateStatus(t.id, 'in_progress')}
-                          style={{ background:'rgba(245,158,11,0.1)', borderColor:'rgba(245,158,11,0.4)', color:'#f59e0b' }}>
-                          ▶ Start Working on Fix
-                        </button>
-                      )}
-                      {t.status === 'in_progress' && (
-                        <button className="abtn" onClick={() => updateStatus(t.id, 'resolved')}
-                          style={{ background:'rgba(16,185,129,0.1)', borderColor:'rgba(16,185,129,0.4)', color:'#10b981' }}>
-                          ✅ Mark Fix Deployed
-                        </button>
-                      )}
-                      <button className="abtn" onClick={() => router.push(`/tickets/${t.id}`)}
-                        style={{ background:'rgba(59,130,246,0.1)', borderColor:'rgba(59,130,246,0.4)', color:'#3b82f6' }}>
-                        👁 Full Ticket Details
-                      </button>
-                    </div>
-                  )}
-                  {['resolved','closed'].includes(t.status) && (
-                    <div style={{ paddingTop:14, borderTop:'1px solid #1f2d45' }}>
-                      <button className="abtn" onClick={() => router.push(`/tickets/${t.id}`)}
-                        style={{ background:'rgba(59,130,246,0.1)', borderColor:'rgba(59,130,246,0.4)', color:'#3b82f6' }}>
-                        👁 View Details
-                      </button>
-                    </div>
-                  )}
-                </div>
-              ))}
+            <div style={{ overflowX:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <thead><tr style={{ background:'#0a0e1a' }}>
+                  {['Ticket #','Title','Raised By','Category','Priority','Status','SLA','AI Reason','Dev Reason','Actions'].map(h=>(
+                    <th key={h} style={{ padding:'10px 14px', textAlign:'left', fontSize:10, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', whiteSpace:'nowrap' }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>
+                  {filtered.map(t => {
+                    const sla  = getSLAStatus(t.sla_resolve_due, t.status)
+                    const stat = STATUS_CONFIG[t.status]     || STATUS_CONFIG.open
+                    const prio = PRIORITY_CONFIG[t.priority] || PRIORITY_CONFIG.medium
+                    return (
+                      <tr key={t.id} className="trow" onClick={()=>router.push(`/tickets/${t.id}`)} style={{ borderTop:'1px solid #1f2d45', transition:'background 0.15s' }}>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:11, fontWeight:700, color:'#06b6d4', fontFamily:'monospace' }}>{t.ticket_number}</span></td>
+                        <td style={{ padding:'11px 14px', maxWidth:180 }}><span style={{ fontSize:13, display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.title}</span></td>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:12, color:'#94a3b8' }}>{t.profiles?.full_name||t.profiles?.email?.split('@')[0]||'User'}</span></td>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:11, color:'#94a3b8' }}>{t.categories?.icon} {t.categories?.name||'—'}</span></td>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:11, fontWeight:600, padding:'3px 7px', borderRadius:5, background:prio.bg, color:prio.color }}>{prio.label}</span></td>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:11, fontWeight:600, padding:'3px 7px', borderRadius:5, background:stat.bg, color:stat.color }}>{stat.label}</span></td>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:11, fontWeight:600, padding:'3px 7px', borderRadius:5, background:sla.bg, color:sla.color }}>{sla.icon} {sla.label}</span></td>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:10, color:'#475569', maxWidth:120, display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.ai_routing_reason||'—'}</span></td>
+                        <td style={{ padding:'11px 14px' }}><span style={{ fontSize:10, color:'#06b6d4', maxWidth:120, display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.assigned_dev_reason||'—'}</span></td>
+                        <td style={{ padding:'11px 14px' }} onClick={e=>e.stopPropagation()}>
+                          <button onClick={()=>router.push(`/tickets/${t.id}`)} style={{ background:'#083344', border:'none', color:'#06b6d4', padding:'5px 10px', borderRadius:6, cursor:'pointer', fontSize:11 }}>View</button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
       </div>
-    </>
+    </div>
   )
+}
+
+function Loader() {
+  return <div style={{ minHeight:'100vh', background:'#0a0e1a', display:'flex', alignItems:'center', justifyContent:'center' }}><div style={{ width:40, height:40, borderRadius:'50%', border:'3px solid #1f2d45', borderTopColor:'#06b6d4', animation:'spin 0.7s linear infinite' }}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>
 }
