@@ -25,12 +25,10 @@ export default function L1Dashboard() {
   async function loadTickets() {
     const { data } = await supabase
       .from('tickets')
-      .select('*, categories(name,icon), profiles(full_name,email,role)')
-      .eq('assigned_team', 'L1')
-      .neq('status', 'resolved')
-	  .neq('status', 'closed')
+      .select('id, ticket_number, title, status, priority, assigned_team, ai_routing_reason, sla_resolve_due, created_at, categories(name, icon)')
       .order('created_at', { ascending: false })
-    if (data) setTickets(data)
+    if (!data) return
+    setTickets(data.filter(t => t.assigned_team === 'L1' && t.status !== 'resolved' && t.status !== 'closed'))
   }
 
   const filtered = filter === 'all' ? tickets : tickets.filter(t => {
