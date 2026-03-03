@@ -10,8 +10,8 @@ const CAN_ASSIGN_DEV = ['ADMIN','IT_MANAGER','L2_AGENT']
 
 export default function TicketDetail() {
   const router   = useRouter()
-  const params   = useParams()           // ✅ useParams() instead of props
-  const ticketId = params?.id            // ✅ get id safely
+  const params   = useParams()
+  const ticketId = params?.id
   const supabase = createClient()
 
   const [ticket,     setTicket]     = useState(null)
@@ -27,9 +27,7 @@ export default function TicketDetail() {
   const [saving,     setSaving]     = useState(false)
   const [msg,        setMsg]        = useState('')
 
-  useEffect(() => {
-    if (ticketId) init()
-  }, [ticketId])
+  useEffect(() => { if (ticketId) init() }, [ticketId])
 
   async function init() {
     const { user, profile: p } = await getCurrentUserProfile(supabase)
@@ -54,16 +52,16 @@ export default function TicketDetail() {
       .select('*, profiles(full_name,email,role)')
       .eq('ticket_id', ticketId)
       .order('created_at', { ascending: true })
-    if (data) setComments(data)
+    setComments(data || [])
   }
 
   async function loadHistory() {
     const { data } = await supabase
       .from('ticket_history')
-      .select('*, profiles(full_name,email)')
+      .select('*')
       .eq('ticket_id', ticketId)
       .order('changed_at', { ascending: false })
-    if (data) setHistory(data)
+    setHistory(data || [])
   }
 
   async function postComment(e) {
@@ -81,31 +79,54 @@ export default function TicketDetail() {
       ticket_id:     ticketId,
       changed_by:    user.id,
       field_changed: 'comment',
-      note:          isInternal ? 'Internal note added' : 'Comment added',
+      note:          isInternal ? '🔒 Internal note added' : '💬 Comment added',
     })
     setComment('')
+    setIsInternal(false)
+    // Reload comments immediately
     await loadComments()
     await loadHistory()
     setPosting(false)
   }
 
+  // ── Update ticket status quickly ──────────────────────────
+  async function updateStatus(newStatus, note) {
+    setSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase.from('tickets')
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', ticketId)
+    await supabase.from('ticket_history').insert({
+      ticket_id:     ticketId,
+      changed_by:    user.id,
+      field_changed: 'status',
+      old_value:     ticket.status,
+      new_value:     newStatus,
+      note,
+    })
+    await loadTicket()
+    await loadHistory()
+    setMsg(`✅ Status updated to: ${newStatus.replace('_',' ').toUpperCase()}`)
+    setSaving(false)
+  }
+
   async function doAction() {
-    if (!actionNote.trim() && action !== 'resolve') { setMsg('Please enter a reason.'); return }
+    if (!actionNote.trim() && action !== 'resolve') { setMsg('⚠️ Please enter a reason.'); return }
     setSaving(true); setMsg('')
     const { data: { user } } = await supabase.auth.getUser()
     try {
       if (action === 'escalate') {
         await supabase.from('tickets').update({ assigned_team:'L2', escalated_to_l2:true, escalation_reason:actionNote, status:'escalated', updated_at:new Date().toISOString() }).eq('id', ticketId)
-        await supabase.from('ticket_history').insert({ ticket_id:ticketId, changed_by:user.id, field_changed:'assigned_team', old_value:'L1', new_value:'L2', note:'Escalated to L2: '+actionNote })
+        await supabase.from('ticket_history').insert({ ticket_id:ticketId, changed_by:user.id, field_changed:'assigned_team', old_value:'L1', new_value:'L2', note:'🔺 Escalated to L2: '+actionNote })
         setMsg('✅ Ticket escalated to L2!')
       } else if (action === 'resolve') {
         const note = actionNote.trim() || 'Issue resolved'
         await supabase.from('tickets').update({ status:'resolved', resolution_notes:note, resolved_at:new Date().toISOString(), updated_at:new Date().toISOString() }).eq('id', ticketId)
-        await supabase.from('ticket_history').insert({ ticket_id:ticketId, changed_by:user.id, field_changed:'status', old_value:ticket.status, new_value:'resolved', note:'Resolved: '+note })
+        await supabase.from('ticket_history').insert({ ticket_id:ticketId, changed_by:user.id, field_changed:'status', old_value:ticket.status, new_value:'resolved', note:'✅ Resolved: '+note })
         setMsg('✅ Ticket resolved!')
       } else if (action === 'assign_dev') {
         await supabase.from('tickets').update({ assigned_team:'DEVELOPER', assigned_dev_reason:actionNote, status:'in_progress', updated_at:new Date().toISOString() }).eq('id', ticketId)
-        await supabase.from('ticket_history').insert({ ticket_id:ticketId, changed_by:user.id, field_changed:'assigned_team', old_value:ticket.assigned_team, new_value:'DEVELOPER', note:'Assigned to developer: '+actionNote })
+        await supabase.from('ticket_history').insert({ ticket_id:ticketId, changed_by:user.id, field_changed:'assigned_team', old_value:ticket.assigned_team, new_value:'DEVELOPER', note:'👨‍💻 Assigned to developer: '+actionNote })
         setMsg('✅ Assigned to Developer team!')
       }
       await loadTicket(); await loadHistory()
@@ -115,7 +136,7 @@ export default function TicketDetail() {
   }
 
   if (loading) return <Loader />
-  if (!ticket)  return (
+  if (!ticket) return (
     <div style={{ minHeight:'100vh', background:'#0a0e1a', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, fontFamily:"'DM Sans',sans-serif" }}>
       <div style={{ fontSize:48 }}>🔍</div>
       <p style={{ color:'#ef4444', fontSize:16 }}>Ticket not found</p>
@@ -128,10 +149,16 @@ export default function TicketDetail() {
   const prio = PRIORITY_CONFIG[ticket.priority] || PRIORITY_CONFIG.medium
   const isAgent = CAN_RESOLVE.includes(profile?.role)
   const tc = ticket.assigned_team==='L2'?{c:'#a78bfa',bg:'#2e1065'}:ticket.assigned_team==='DEVELOPER'?{c:'#06b6d4',bg:'#083344'}:{c:'#60a5fa',bg:'#1e3a5f'}
+  const isOpen = !['resolved','closed'].includes(ticket.status)
 
   return (
     <div style={{ minHeight:'100vh', background:'#0a0e1a', fontFamily:"'DM Sans',sans-serif", color:'#e2e8f0' }}>
-      <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}} @keyframes spin{to{transform:rotate(360deg)}} .inp:focus{border-color:#3b82f6!important;box-shadow:0 0 0 3px rgba(59,130,246,0.1)!important;}`}</style>
+      <style>{`
+        @keyframes fadeUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes spin   { to{transform:rotate(360deg)} }
+        .inp:focus { border-color:#3b82f6!important; box-shadow:0 0 0 3px rgba(59,130,246,0.1)!important; }
+        .sbtn:hover { opacity:0.85!important; transform:translateY(-1px); }
+      `}</style>
 
       {/* Navbar */}
       <div style={{ background:'#111827', borderBottom:'1px solid #1f2d45', padding:'0 24px', height:60, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:100 }}>
@@ -147,7 +174,7 @@ export default function TicketDetail() {
 
       <div style={{ maxWidth:1200, margin:'0 auto', padding:'28px 24px' }}>
 
-        {/* Ticket Header */}
+        {/* Header */}
         <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:16, padding:'24px 28px', marginBottom:20, animation:'fadeUp 0.4s ease' }}>
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap' }}>
             <span style={{ fontSize:13, fontWeight:700, color:'#3b82f6', fontFamily:'monospace' }}>{ticket.ticket_number}</span>
@@ -163,12 +190,11 @@ export default function TicketDetail() {
         </div>
 
         <div style={{ display:'grid', gridTemplateColumns:'1fr 320px', gap:20, alignItems:'start' }}>
-
-          {/* Left */}
           <div>
+
             {/* Description */}
             {ticket.description && (
-              <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px 24px', marginBottom:16, animation:'fadeUp 0.4s 0.1s ease both' }}>
+              <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px 24px', marginBottom:16 }}>
                 <div style={{ fontSize:12, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:12 }}>📝 Description</div>
                 <p style={{ color:'#cbd5e1', fontSize:14, lineHeight:1.8, whiteSpace:'pre-wrap' }}>{ticket.description}</p>
               </div>
@@ -185,44 +211,91 @@ export default function TicketDetail() {
               </div>
             )}
 
-            {/* Agent Actions */}
-            {isAgent && !['resolved','closed'].includes(ticket.status) && (
+            {/* ── AGENT ACTIONS ── */}
+            {isAgent && isOpen && (
               <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px 24px', marginBottom:16 }}>
                 <div style={{ fontSize:12, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:14 }}>⚡ Agent Actions</div>
+
                 {msg && (
                   <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:14, background:msg.startsWith('✅')?'#052e16':'#450a0a', color:msg.startsWith('✅')?'#6ee7b7':'#fca5a5', fontSize:13, border:`1px solid ${msg.startsWith('✅')?'#10b98130':'#ef444430'}` }}>
                     {msg}
                   </div>
                 )}
-                <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:14 }}>
-                  {ticket.assigned_team === 'L1' && CAN_ESCALATE.includes(profile?.role) && (
-                    <button onClick={() => setAction(action==='escalate'?'':'escalate')} style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #f9731640', background:action==='escalate'?'#431407':'transparent', color:'#fb923c', fontFamily:"'DM Sans',sans-serif" }}>🔺 Escalate to L2</button>
-                  )}
-                  {CAN_ASSIGN_DEV.includes(profile?.role) && (
-                    <button onClick={() => setAction(action==='assign_dev'?'':'assign_dev')} style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #06b6d440', background:action==='assign_dev'?'#083344':'transparent', color:'#22d3ee', fontFamily:"'DM Sans',sans-serif" }}>👨‍💻 Assign Developer</button>
-                  )}
-                  <button onClick={() => setAction(action==='resolve'?'':'resolve')} style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #10b98140', background:action==='resolve'?'#052e16':'transparent', color:'#34d399', fontFamily:"'DM Sans',sans-serif" }}>✅ Mark Resolved</button>
+
+                {/* ── Quick Status Buttons ── */}
+                <div style={{ marginBottom:16 }}>
+                  <div style={{ fontSize:11, color:'#475569', marginBottom:8, fontWeight:600 }}>QUICK STATUS UPDATE</div>
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+
+                    <button className="sbtn" onClick={() => updateStatus('in_progress', '⚙️ Status changed to In Progress')}
+                      disabled={ticket.status === 'in_progress' || saving}
+                      style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #8b5cf640', background:ticket.status==='in_progress'?'#2e1065':'transparent', color:'#a78bfa', fontFamily:"'DM Sans',sans-serif", transition:'all 0.2s', opacity:ticket.status==='in_progress'?1:0.8 }}>
+                      ⚙️ In Progress {ticket.status==='in_progress'&&'✓'}
+                    </button>
+
+                    <button className="sbtn" onClick={() => updateStatus('pending_user', '👤 Waiting for user response')}
+                      disabled={ticket.status === 'pending_user' || saving}
+                      style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #06b6d440', background:ticket.status==='pending_user'?'#083344':'transparent', color:'#22d3ee', fontFamily:"'DM Sans',sans-serif", transition:'all 0.2s', opacity:ticket.status==='pending_user'?1:0.8 }}>
+                      👤 Pending User {ticket.status==='pending_user'&&'✓'}
+                    </button>
+
+                    <button className="sbtn" onClick={() => updateStatus('pending_user', '🏭 Waiting for OEM / Vendor response')}
+                      disabled={saving}
+                      style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #f59e0b40', background:'transparent', color:'#fbbf24', fontFamily:"'DM Sans',sans-serif", transition:'all 0.2s' }}>
+                      🏭 Pending OEM
+                    </button>
+
+                  </div>
                 </div>
+
+                {/* ── Escalate / Resolve / Dev ── */}
+                <div style={{ borderTop:'1px solid #1f2d45', paddingTop:14 }}>
+                  <div style={{ fontSize:11, color:'#475569', marginBottom:8, fontWeight:600 }}>ESCALATION & RESOLUTION</div>
+                  <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+
+                    {ticket.assigned_team === 'L1' && CAN_ESCALATE.includes(profile?.role) && (
+                      <button className="sbtn" onClick={() => setAction(action==='escalate'?'':'escalate')}
+                        style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #f9731640', background:action==='escalate'?'#431407':'transparent', color:'#fb923c', fontFamily:"'DM Sans',sans-serif", transition:'all 0.2s' }}>
+                        🔺 Escalate to L2
+                      </button>
+                    )}
+
+                    {CAN_ASSIGN_DEV.includes(profile?.role) && (
+                      <button className="sbtn" onClick={() => setAction(action==='assign_dev'?'':'assign_dev')}
+                        style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #06b6d440', background:action==='assign_dev'?'#083344':'transparent', color:'#22d3ee', fontFamily:"'DM Sans',sans-serif", transition:'all 0.2s' }}>
+                        👨‍💻 Assign Developer
+                      </button>
+                    )}
+
+                    <button className="sbtn" onClick={() => setAction(action==='resolve'?'':'resolve')}
+                      style={{ padding:'9px 16px', borderRadius:9, fontSize:13, cursor:'pointer', border:'1px solid #10b98140', background:action==='resolve'?'#052e16':'transparent', color:'#34d399', fontFamily:"'DM Sans',sans-serif", transition:'all 0.2s' }}>
+                      ✅ Mark Resolved
+                    </button>
+
+                  </div>
+                </div>
+
+                {/* Action panel */}
                 {action && (
-                  <div style={{ background:'#0a0e1a', borderRadius:10, padding:16, border:'1px solid #1f2d45' }}>
+                  <div style={{ background:'#0a0e1a', borderRadius:10, padding:16, border:'1px solid #1f2d45', marginTop:14 }}>
                     <div style={{ fontSize:12, color:'#64748b', marginBottom:8 }}>
-                      {action==='escalate'?'Reason for escalation:':action==='assign_dev'?'Developer team / reason:':'Resolution notes (optional):'}
+                      {action==='escalate'?'Reason for escalation to L2:':action==='assign_dev'?'Developer team / reason:':'Resolution notes (optional):'}
                     </div>
                     <textarea className="inp" value={actionNote} onChange={e => setActionNote(e.target.value)}
-                      placeholder={action==='escalate'?'e.g. API error, needs code fix':action==='assign_dev'?'e.g. Backend team — DB issue':'e.g. Reset user account, issue resolved'}
+                      placeholder={action==='escalate'?'e.g. API error confirmed, needs code fix':action==='assign_dev'?'e.g. Backend team — DB query broken':'e.g. Password reset done, user confirmed working'}
                       style={{ width:'100%', padding:'10px 12px', background:'#111827', border:'1px solid #1f2d45', borderRadius:8, color:'#e2e8f0', fontFamily:"'DM Sans',sans-serif", fontSize:13, outline:'none', resize:'vertical', minHeight:70, marginBottom:10 }}/>
                     <div style={{ display:'flex', gap:8 }}>
                       <button onClick={doAction} disabled={saving} style={{ padding:'9px 20px', background:'linear-gradient(135deg,#2563eb,#3b82f6)', border:'none', borderRadius:8, color:'#fff', cursor:'pointer', fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif", display:'flex', alignItems:'center', gap:6 }}>
-                        {saving ? <><div style={{ width:14, height:14, borderRadius:'50%', border:'2px solid rgba(255,255,255,0.3)', borderTopColor:'#fff', animation:'spin 0.7s linear infinite' }}/>Saving...</> : 'Confirm'}
+                        {saving?<><div style={{ width:14, height:14, borderRadius:'50%', border:'2px solid rgba(255,255,255,0.3)', borderTopColor:'#fff', animation:'spin 0.7s linear infinite' }}/>Saving...</>:'Confirm'}
                       </button>
-                      <button onClick={() => { setAction(''); setActionNote(''); setMsg('') }} style={{ padding:'9px 16px', background:'transparent', border:'1px solid #1f2d45', borderRadius:8, color:'#64748b', cursor:'pointer', fontSize:13, fontFamily:"'DM Sans',sans-serif" }}>Cancel</button>
+                      <button onClick={() => { setAction(''); setActionNote(''); setMsg('') }} style={{ padding:'9px 16px', background:'transparent', border:'1px solid #1f2d45', borderRadius:8, color:'#64748b', cursor:'pointer', fontSize:13 }}>Cancel</button>
                     </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Resolution banner */}
+            {/* Resolved banner */}
             {ticket.status === 'resolved' && ticket.resolution_notes && (
               <div style={{ background:'#052e16', border:'1px solid #10b98140', borderRadius:12, padding:'14px 18px', marginBottom:16 }}>
                 <div style={{ fontSize:11, fontWeight:600, color:'#10b981', marginBottom:4 }}>✅ RESOLVED</div>
@@ -230,38 +303,48 @@ export default function TicketDetail() {
               </div>
             )}
 
-            {/* Comments */}
+            {/* ── COMMENTS ── */}
             <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, overflow:'hidden' }}>
-              <div style={{ padding:'16px 24px', borderBottom:'1px solid #1f2d45' }}>
+              <div style={{ padding:'16px 24px', borderBottom:'1px solid #1f2d45', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                 <span style={{ fontSize:15, fontWeight:600 }}>💬 Comments ({comments.length})</span>
+                <button onClick={loadComments} style={{ background:'transparent', border:'none', color:'#475569', cursor:'pointer', fontSize:12 }}>🔄 Refresh</button>
               </div>
               <div style={{ padding:'16px 24px' }}>
-                {comments.length === 0 && <p style={{ color:'#334155', fontSize:13, padding:'8px 0' }}>No comments yet.</p>}
+                {comments.length === 0 && <p style={{ color:'#334155', fontSize:13, padding:'8px 0' }}>No comments yet. Add the first comment below.</p>}
+
                 {comments.map(c => (
-                  <div key={c.id} style={{ marginBottom:16, paddingBottom:16, borderBottom:'1px solid #0f172a' }}>
+                  <div key={c.id} style={{ marginBottom:16, paddingBottom:16, borderBottom:'1px solid #0f172a', animation:'fadeUp 0.3s ease' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
-                      <div style={{ width:28, height:28, borderRadius:'50%', background:'linear-gradient(135deg,#3b82f6,#06b6d4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color:'#fff' }}>
+                      <div style={{ width:30, height:30, borderRadius:'50%', background:c.is_internal?'linear-gradient(135deg,#f97316,#ef4444)':'linear-gradient(135deg,#3b82f6,#06b6d4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:'#fff', flexShrink:0 }}>
                         {(c.profiles?.full_name||c.profiles?.email||'U')[0].toUpperCase()}
                       </div>
-                      <span style={{ fontSize:13, fontWeight:500 }}>{c.profiles?.full_name||c.profiles?.email?.split('@')[0]||'User'}</span>
-                      {c.is_internal && <span style={{ fontSize:10, padding:'1px 6px', borderRadius:4, background:'#451a03', color:'#fb923c' }}>🔒 Internal</span>}
+                      <div>
+                        <span style={{ fontSize:13, fontWeight:600, color:'#e2e8f0' }}>{c.profiles?.full_name||c.profiles?.email?.split('@')[0]||'User'}</span>
+                        {c.is_internal && <span style={{ fontSize:10, padding:'1px 6px', borderRadius:4, background:'#451a03', color:'#fb923c', marginLeft:8 }}>🔒 Internal</span>}
+                      </div>
                       <span style={{ fontSize:11, color:'#334155', marginLeft:'auto' }}>{new Date(c.created_at).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
                     </div>
-                    <div style={{ fontSize:13, color:'#cbd5e1', paddingLeft:36, lineHeight:1.7, whiteSpace:'pre-wrap' }}>{c.comment_text}</div>
+                    <div style={{ fontSize:14, color:'#cbd5e1', paddingLeft:38, lineHeight:1.8, whiteSpace:'pre-wrap', background:c.is_internal?'rgba(249,115,22,0.05)':'transparent', borderRadius:8, padding:c.is_internal?'10px 12px':'0 0 0 38px' }}>
+                      {c.comment_text}
+                    </div>
                   </div>
                 ))}
-                <form onSubmit={postComment} style={{ marginTop:8 }}>
-                  <textarea className="inp" value={comment} onChange={e => setComment(e.target.value)} placeholder="Write a comment..."
-                    style={{ width:'100%', padding:'10px 12px', background:'#0a0e1a', border:'1px solid #1f2d45', borderRadius:10, color:'#e2e8f0', fontFamily:"'DM Sans',sans-serif", fontSize:13, outline:'none', resize:'vertical', minHeight:80, marginBottom:10 }}/>
+
+                {/* Add comment form */}
+                <form onSubmit={postComment} style={{ marginTop:16, borderTop:'1px solid #1f2d45', paddingTop:16 }}>
+                  <textarea className="inp" value={comment} onChange={e => setComment(e.target.value)}
+                    placeholder="Write a comment or update..."
+                    style={{ width:'100%', padding:'12px 14px', background:'#0a0e1a', border:'1px solid #1f2d45', borderRadius:10, color:'#e2e8f0', fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:'none', resize:'vertical', minHeight:90, marginBottom:12, boxSizing:'border-box' }}/>
                   <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:8 }}>
                     {isAgent && (
-                      <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', fontSize:13, color:'#64748b' }}>
-                        <input type="checkbox" checked={isInternal} onChange={e => setIsInternal(e.target.checked)} style={{ cursor:'pointer' }}/>
-                        🔒 Internal note
+                      <label style={{ display:'flex', alignItems:'center', gap:8, cursor:'pointer', fontSize:13, color:isInternal?'#fb923c':'#64748b' }}>
+                        <input type="checkbox" checked={isInternal} onChange={e => setIsInternal(e.target.checked)} style={{ cursor:'pointer', accentColor:'#f97316' }}/>
+                        🔒 Internal note (hidden from user)
                       </label>
                     )}
-                    <button type="submit" disabled={!comment.trim()||posting} style={{ padding:'9px 20px', background:'linear-gradient(135deg,#2563eb,#3b82f6)', border:'none', borderRadius:9, color:'#fff', cursor:'pointer', fontSize:13, fontWeight:600, fontFamily:"'DM Sans',sans-serif", opacity:!comment.trim()||posting?0.5:1, marginLeft:'auto' }}>
-                      {posting?'Posting...':'Post Comment'}
+                    <button type="submit" disabled={!comment.trim()||posting}
+                      style={{ padding:'10px 24px', background:'linear-gradient(135deg,#2563eb,#3b82f6)', border:'none', borderRadius:9, color:'#fff', cursor:'pointer', fontSize:14, fontWeight:600, fontFamily:"'DM Sans',sans-serif", opacity:!comment.trim()||posting?0.5:1, marginLeft:'auto', display:'flex', alignItems:'center', gap:8 }}>
+                      {posting?<><div style={{ width:14, height:14, borderRadius:'50%', border:'2px solid rgba(255,255,255,0.3)', borderTopColor:'#fff', animation:'spin 0.7s linear infinite' }}/>Posting...</>:'Post Comment →'}
                     </button>
                   </div>
                 </form>
@@ -269,7 +352,7 @@ export default function TicketDetail() {
             </div>
           </div>
 
-          {/* Right - Details + History */}
+          {/* Right panel */}
           <div>
             <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px', marginBottom:14 }}>
               <div style={{ fontSize:12, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:14 }}>Ticket Details</div>
@@ -289,11 +372,12 @@ export default function TicketDetail() {
               ))}
             </div>
 
-            {/* History */}
-            <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px', maxHeight:380, overflow:'auto' }}>
-              <div style={{ fontSize:12, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:14 }}>📋 Activity</div>
-              {history.length === 0 ? <p style={{ fontSize:12, color:'#334155' }}>No history yet</p> : (
-                history.map((h,i) => (
+            {/* Activity history */}
+            <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px', maxHeight:400, overflow:'auto' }}>
+              <div style={{ fontSize:12, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:14 }}>📋 Activity ({history.length})</div>
+              {history.length === 0
+                ? <p style={{ fontSize:12, color:'#334155' }}>No activity yet</p>
+                : history.map((h,i) => (
                   <div key={h.id} style={{ display:'flex', gap:10, marginBottom:12, paddingBottom:12, borderBottom:i<history.length-1?'1px solid #0f172a':'none' }}>
                     <div style={{ width:22, height:22, borderRadius:'50%', background:'#1e293b', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, flexShrink:0, marginTop:2 }}>
                       {h.field_changed==='status'?'🔄':h.field_changed==='assigned_team'?'👤':'💬'}
@@ -304,7 +388,7 @@ export default function TicketDetail() {
                     </div>
                   </div>
                 ))
-              )}
+              }
             </div>
           </div>
         </div>
