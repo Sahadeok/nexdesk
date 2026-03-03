@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient, getProfile } from '../../../lib/supabase'
-import Topbar from '../../../components/Topbar'
+import Topbar from '../../components/Topbar'
 
 const PC = { critical:'#ef4444', high:'#f59e0b', medium:'#3b82f6', low:'#10b981' }
 

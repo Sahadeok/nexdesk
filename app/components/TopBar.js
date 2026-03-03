@@ -1,6 +1,6 @@
 'use client'
 import { useRouter } from 'next/navigation'
-import { createClient } from '../lib/supabase'
+import { createClient } from '../../lib/supabase'
 
 const ROLE_COLORS = {
   ADMIN:      '#ef4444', IT_MANAGER: '#f97316',
