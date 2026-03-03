@@ -27,7 +27,8 @@ export default function L1Dashboard() {
       .from('tickets')
       .select('*, categories(name,icon), profiles!tickets_created_by_fkey(full_name,email)')
       .eq('assigned_team', 'L1')
-      .not('status', 'in', '(resolved,closed)')
+      .neq('status', 'resolved')
+	  .neq('status', 'closed')
       .order('created_at', { ascending: false })
     if (data) setTickets(data)
   }
