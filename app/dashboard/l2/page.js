@@ -25,7 +25,7 @@ export default function L2Dashboard() {
   async function loadTickets() {
     const { data } = await supabase
       .from('tickets')
-      .select('*, categories(name,icon), profiles!tickets_created_by_fkey(full_name,email)')
+       .select('*, categories(name,icon), profiles(full_name,email,role)')
 	  .neq('status', 'resolved')
       .neq('status', 'closed')
       .order('priority', { ascending: true })

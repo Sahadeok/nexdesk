@@ -25,7 +25,7 @@ export default function L1Dashboard() {
   async function loadTickets() {
     const { data } = await supabase
       .from('tickets')
-      .select('*, categories(name,icon), profiles!tickets_created_by_fkey(full_name,email)')
+      .select('*, categories(name,icon), profiles(full_name,email,role)')
       .eq('assigned_team', 'L1')
       .neq('status', 'resolved')
 	  .neq('status', 'closed')

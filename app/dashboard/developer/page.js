@@ -25,8 +25,9 @@ export default function DeveloperDashboard() {
   async function loadTickets() {
     const { data } = await supabase
       .from('tickets')
-      .select('*, categories(name,icon), profiles!tickets_created_by_fkey(full_name,email)')
+      .select('*, categories(name,icon), profiles(full_name,email,role)')
       .eq('assigned_team', 'DEVELOPER')
+      .neq('status', 'resolved')
       .neq('status', 'resolved')
 .neq('status', 'closed')
       .order('created_at', { ascending: false })
