@@ -1,369 +1,444 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
-import GlobalNav from '../../components/GlobalNav'
 
-const ROLES = ['ADMIN','IT_MANAGER','L1_AGENT','L2_AGENT','DEVELOPER','END_USER']
-const ROLE_COLOR = {
-  ADMIN:      { bg:'#451a03', c:'#fbbf24' },
-  IT_MANAGER: { bg:'#451a03', c:'#fbbf24' },
-  L1_AGENT:   { bg:'#1e3a5f', c:'#60a5fa' },
-  L2_AGENT:   { bg:'#2e1065', c:'#a78bfa' },
-  DEVELOPER:  { bg:'#083344', c:'#06b6d4' },
-  END_USER:   { bg:'#052e16', c:'#34d399' },
-}
-
-export default function UserManagement() {
+export default function UserDashboard() {
   const router   = useRouter()
   const supabase = createClient()
+  const [profile, setProfile] = useState(null)
+  const [tickets, setTickets] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [tab, setTab]         = useState('tickets') // 'tickets' | 'new'
 
-  const [users,    setUsers]    = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [saving,   setSaving]   = useState(false)
-  const [msg,      setMsg]      = useState('')
-  const [search,   setSearch]   = useState('')
-  const [filter,   setFilter]   = useState('all')
-  const [showForm, setShowForm] = useState(false)
-  const [editUser, setEditUser] = useState(null) // null = new user
-  const [confirm,  setConfirm]  = useState(null) // user to deactivate
+  // New ticket form state
+  const [form, setForm]           = useState({ title: '', description: '', priority: 'medium' })
+  const [screenshot, setScreenshot] = useState(null)   // { base64, type, name, preview }
+  const [submitting, setSubmitting] = useState(false)
+  const [submitMsg, setSubmitMsg]   = useState('')
+  const [submitted, setSubmitted]   = useState(false)
+  const [newTicketId, setNewTicketId] = useState(null)
+  const fileRef = useRef()
 
-  const [form, setForm] = useState({ full_name:'', email:'', role:'END_USER', department:'', phone:'', is_active:true })
-
-  useEffect(() => { init() }, [])
-
-  async function init() {
-    const { user, profile: p } = await getCurrentUserProfile(supabase)
-    if (!user) { router.replace('/login'); return }
-    if (!['ADMIN','IT_MANAGER'].includes(p?.role)) { router.replace('/dashboard'); return }
-    await loadUsers()
-    setLoading(false)
+  const STATUS = {
+    open:        { label:'Open',        bg:'#1e3a5f', color:'#60a5fa' },
+    in_progress: { label:'In Progress', bg:'#1e1b4b', color:'#a78bfa' },
+    resolved:    { label:'Resolved',    bg:'#022c22', color:'#34d399' },
+    closed:      { label:'Closed',      bg:'#1f2937', color:'#6b7280' },
+  }
+  const PRIORITY = {
+    low:      { label:'Low',      color:'#34d399' },
+    medium:   { label:'Medium',   color:'#f59e0b' },
+    high:     { label:'High',     color:'#f97316' },
+    critical: { label:'Critical', color:'#ef4444' },
   }
 
-  async function loadUsers() {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (data) setUsers(data)
-  }
-
-  function openNew() {
-    setForm({ full_name:'', email:'', role:'END_USER', department:'', phone:'', is_active:true })
-    setEditUser(null)
-    setShowForm(true)
-    setMsg('')
-  }
-
-  function openEdit(u) {
-    setForm({ full_name:u.full_name||'', email:u.email||'', role:u.role||'END_USER', department:u.department||'', phone:u.phone||'', is_active:u.is_active!==false })
-    setEditUser(u)
-    setShowForm(true)
-    setMsg('')
-  }
-
-  async function saveUser() {
-    if (!form.full_name.trim() || !form.email.trim()) { setMsg('❌ Name and Email are required'); return }
-    setSaving(true); setMsg('')
-    try {
-      if (editUser) {
-        // Update existing profile
-        const { error } = await supabase.from('profiles').update({
-          full_name:  form.full_name.trim(),
-          role:       form.role,
-          department: form.department.trim(),
-          phone:      form.phone.trim(),
-          is_active:  form.is_active,
-          updated_at: new Date().toISOString(),
-        }).eq('id', editUser.id)
-        if (error) throw error
-        setMsg('✅ User updated successfully!')
-      } else {
-        // Create new user via Supabase Auth
-        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-          email:    form.email.trim(),
-          password: 'NexDesk@123', // default password
-          email_confirm: true,
-        })
-        if (authError) throw authError
-        // Insert profile
-        const { error: profError } = await supabase.from('profiles').insert({
-          id:         authData.user.id,
-          email:      form.email.trim(),
-          full_name:  form.full_name.trim(),
-          role:       form.role,
-          department: form.department.trim(),
-          phone:      form.phone.trim(),
-          is_active:  true,
-        })
-        if (profError) throw profError
-        setMsg('✅ User created! Default password: NexDesk@123')
+  useEffect(() => {
+    async function init() {
+      try { await supabase.auth.refreshSession() } catch(_) {}
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { router.replace('/login'); return }
+      const { user: u, profile: p } = await getCurrentUserProfile(supabase)
+      if (!u || !p) { router.replace('/login'); return }
+      // Redirect non-END_USER to their dashboard
+      if (p.role !== 'END_USER') {
+        const dash = {
+          ADMIN: '/dashboard/admin', IT_MANAGER: '/dashboard/admin',
+          L1_AGENT: '/dashboard/l1', L2_AGENT: '/dashboard/l2',
+          DEVELOPER: '/dashboard/developer',
+        }
+        router.replace(dash[p.role] || '/dashboard/admin')
+        return
       }
-      await loadUsers()
-      if (!editUser) { setShowForm(false) }
-    } catch(e) {
-      setMsg('❌ ' + (e.message || 'Something went wrong'))
+      setProfile(p)
+      await loadTickets(u.id)
+      setLoading(false)
     }
-    setSaving(false)
+    init()
+  }, [])
+
+  async function loadTickets(userId) {
+    const { data } = await supabase
+      .from('tickets')
+      .select('*')
+      .eq('created_by', userId)
+      .order('created_at', { ascending: false })
+    setTickets(data || [])
   }
 
-  async function toggleActive(u) {
-    const newStatus = !u.is_active
-    await supabase.from('profiles').update({ is_active: newStatus }).eq('id', u.id)
-    setUsers(prev => prev.map(x => x.id===u.id ? {...x, is_active:newStatus} : x))
-    setConfirm(null)
-    setMsg(`✅ User ${newStatus?'activated':'deactivated'} successfully!`)
-    setTimeout(() => setMsg(''), 3000)
+  // ── Screenshot handler ─────────────────────────────────────
+  function handleFile(e) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) { alert('Please upload an image file'); return }
+    if (file.size > 5 * 1024 * 1024) { alert('Image must be under 5MB'); return }
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const base64Full = ev.target.result           // data:image/png;base64,XXXX
+      const base64     = base64Full.split(',')[1]   // just the base64 part
+      setScreenshot({ base64, type: file.type, name: file.name, preview: base64Full })
+    }
+    reader.readAsDataURL(file)
   }
 
-  async function changeRole(userId, newRole) {
-    await supabase.from('profiles').update({ role: newRole }).eq('id', userId)
-    setUsers(prev => prev.map(u => u.id===userId ? {...u, role:newRole} : u))
+  function removeScreenshot() {
+    setScreenshot(null)
+    if (fileRef.current) fileRef.current.value = ''
   }
 
-  // Filter users
-  const shown = users.filter(u => {
-    const matchSearch = !search || u.full_name?.toLowerCase().includes(search.toLowerCase()) || u.email?.toLowerCase().includes(search.toLowerCase())
-    const matchFilter = filter==='all' || (filter==='active'&&u.is_active!==false) || (filter==='inactive'&&u.is_active===false) || u.role===filter
-    return matchSearch && matchFilter
-  })
+  // ── Submit ticket ──────────────────────────────────────────
+  async function handleSubmit() {
+    if (!form.title.trim())       { setSubmitMsg('❌ Please enter a title'); return }
+    if (!form.description.trim()) { setSubmitMsg('❌ Please describe your issue'); return }
+    setSubmitting(true)
+    setSubmitMsg('')
 
-  const stats = {
-    total:    users.length,
-    active:   users.filter(u=>u.is_active!==false).length,
-    inactive: users.filter(u=>u.is_active===false).length,
-    agents:   users.filter(u=>['L1_AGENT','L2_AGENT','DEVELOPER'].includes(u.role)).length,
+    try {
+      // Generate ticket number
+      const { count } = await supabase.from('tickets').select('*', { count: 'exact', head: true })
+      const ticketNumber = `TKT-${new Date().getFullYear()}-${String((count || 0) + 1).padStart(4, '0')}`
+
+      const { data: ticket, error } = await supabase.from('tickets').insert({
+        title:         form.title.trim(),
+        description:   form.description.trim(),
+        priority:      form.priority,
+        status:        'open',
+        category:      'general',
+        ticket_number: ticketNumber,
+        created_by:    profile?.id,
+        raised_by:     profile?.id,
+        source:        'user_portal',
+        assigned_team: 'L1',
+        created_at:    new Date().toISOString(),
+      }).select().single()
+
+      if (error) { setSubmitMsg('❌ ' + error.message); setSubmitting(false); return }
+
+      setNewTicketId(ticket.id)
+
+      // 🤖 Auto-trigger AI Diagnosis
+      try {
+        fetch('/api/ticket-diagnosis', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticket_id: ticket.id })
+        })
+      } catch(_) {}
+
+      // 📸 Screenshot analysis if uploaded
+      if (screenshot) {
+        try {
+          fetch('/api/screenshot-analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              image_base64: screenshot.base64,
+              media_type:   screenshot.type,
+              ticket_id:    ticket.id
+            })
+          })
+        } catch(_) {}
+      }
+
+      setSubmitted(true)
+      await loadTickets(profile?.id)
+      setForm({ title: '', description: '', priority: 'medium' })
+      setScreenshot(null)
+
+    } catch(e) {
+      setSubmitMsg('❌ Something went wrong. Please try again.')
+      setSubmitting(false)
+    }
   }
 
-  if (loading) return <Loader />
+  function startNewTicket() {
+    setSubmitted(false)
+    setSubmitting(false)
+    setSubmitMsg('')
+    setNewTicketId(null)
+    setForm({ title: '', description: '', priority: 'medium' })
+    setScreenshot(null)
+    setTab('new')
+  }
+
+  // ── Styles ─────────────────────────────────────────────────
+  const S = {
+    page:   { minHeight:'100vh', background:'#0a0e1a', color:'#e2e8f0', fontFamily:'Calibri, sans-serif' },
+    nav:    { background:'#111827', borderBottom:'1px solid #1f2d45', padding:'0 24px', height:56, display:'flex', alignItems:'center', justifyContent:'space-between' },
+    logo:   { display:'flex', alignItems:'center', gap:10 },
+    logoBox:{ width:32, height:32, borderRadius:8, background:'linear-gradient(135deg,#2563eb,#06b6d4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 },
+    body:   { maxWidth:900, margin:'0 auto', padding:'32px 16px' },
+    card:   { background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:24, marginBottom:20 },
+    tabBar: { display:'flex', gap:8, marginBottom:24 },
+    tab:    (active) => ({ padding:'8px 20px', borderRadius:8, border:'none', cursor:'pointer', fontSize:13, fontWeight:600,
+                background: active ? '#2563eb' : '#1f2937', color: active ? '#fff' : '#64748b', transition:'all 0.15s' }),
+    input:  { width:'100%', padding:'10px 14px', background:'#0f172a', border:'1px solid #1f2d45', borderRadius:8,
+               color:'#e2e8f0', fontSize:14, fontFamily:'Calibri, sans-serif', boxSizing:'border-box', outline:'none' },
+    label:  { display:'block', marginBottom:6, fontSize:13, color:'#94a3b8', fontWeight:600 },
+    btn:    (col='#2563eb') => ({ padding:'10px 24px', background:col, border:'none', borderRadius:8, color:'#fff',
+               cursor:'pointer', fontSize:14, fontWeight:600 }),
+    badge:  (st) => ({ padding:'3px 10px', borderRadius:6, fontSize:11, fontWeight:600,
+               background: STATUS[st]?.bg || '#1f2937', color: STATUS[st]?.color || '#fff' }),
+  }
+
+  if (loading) return (
+    <div style={{ ...S.page, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div style={{ textAlign:'center' }}>
+        <div style={{ fontSize:32, marginBottom:12 }}>⚡</div>
+        <div style={{ color:'#64748b' }}>Loading your dashboard...</div>
+      </div>
+    </div>
+  )
 
   return (
-    <div style={{ minHeight:'100vh', background:'#0a0e1a', fontFamily:"'DM Sans',sans-serif", color:'#e2e8f0' }}>
-      <style>{`
-        @keyframes fadeUp  { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
-        @keyframes spin    { to{transform:rotate(360deg)} }
-        .urow:hover  { background:#0f172a!important; }
-        .inp:focus   { border-color:#3b82f6!important; outline:none; }
-        .rbtn:hover  { opacity:0.8!important; }
-      `}</style>
-
-      <GlobalNav title="User Management" />
-
-      <div style={{ maxWidth:1300, margin:'0 auto', padding:'28px 24px' }}>
-
-        {/* Header */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
-          <div>
-            <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:22, fontWeight:800, marginBottom:4 }}>👥 User Management</h1>
-            <p style={{ color:'#64748b', fontSize:13 }}>Create, edit, assign roles and manage all NexDesk users</p>
-          </div>
-          <button onClick={openNew}
-            style={{ padding:'10px 20px', background:'linear-gradient(135deg,#2563eb,#3b82f6)', border:'none', borderRadius:10, color:'#fff', cursor:'pointer', fontSize:14, fontWeight:600, display:'flex', alignItems:'center', gap:8 }}>
-            + Create User
+    <div style={S.page}>
+      {/* ── NAV ── */}
+      <nav style={S.nav}>
+        <div style={S.logo}>
+          <div style={S.logoBox}>⚡</div>
+          <span style={{ fontWeight:800, fontSize:18, color:'#e2e8f0' }}>
+            Nex<span style={{ color:'#06b6d4' }}>Desk</span>
+          </span>
+          <span style={{ color:'#334155', margin:'0 4px' }}>›</span>
+          <span style={{ color:'#64748b', fontSize:13 }}>My Support</span>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <span style={{ fontSize:13, color:'#64748b' }}>👤 {profile?.full_name || profile?.email}</span>
+          <button onClick={() => router.push('/ai-resolution')}
+            style={{ padding:'6px 14px', background:'linear-gradient(135deg,#6366f1,#8b5cf6)', border:'none', borderRadius:8, color:'#fff', cursor:'pointer', fontSize:12, fontWeight:600 }}>
+            🤖 Get AI Help
+          </button>
+          <button onClick={async () => { await supabase.auth.signOut({ scope: 'global' }); window.location.replace('/login') }}
+            style={{ padding:'6px 14px', background:'transparent', border:'1px solid #1f2d45', borderRadius:8, color:'#64748b', cursor:'pointer', fontSize:12 }}>
+            Sign Out
           </button>
         </div>
+      </nav>
 
-        {msg && (
-          <div style={{ padding:'12px 18px', borderRadius:10, marginBottom:16, background:msg.startsWith('✅')?'#052e16':'#450a0a', color:msg.startsWith('✅')?'#34d399':'#fca5a5', border:`1px solid ${msg.startsWith('✅')?'#10b98130':'#ef444430'}`, fontSize:13 }}>
-            {msg}
-          </div>
-        )}
+      <div style={S.body}>
+        {/* ── WELCOME ── */}
+        <div style={{ marginBottom:24 }}>
+          <h1 style={{ margin:0, fontSize:24, fontWeight:800, color:'#e2e8f0' }}>
+            Welcome back, {profile?.full_name?.split(' ')[0] || 'there'} 👋
+          </h1>
+          <p style={{ margin:'6px 0 0', color:'#64748b', fontSize:14 }}>
+            Raise a support ticket or track your existing requests below.
+          </p>
+        </div>
 
-        {/* Stats */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:24 }}>
+        {/* ── STATS ROW ── */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
           {[
-            ['👥','Total Users',  stats.total,    '#3b82f6','#1e3a5f'],
-            ['✅','Active',        stats.active,   '#10b981','#052e16'],
-            ['🚫','Inactive',      stats.inactive, '#ef4444','#450a0a'],
-            ['🎫','Agents/Dev',    stats.agents,   '#8b5cf6','#2e1065'],
-          ].map(([icon,label,val,color,bg],i) => (
-            <div key={label} style={{ background:'#111827', border:`1px solid ${color}30`, borderRadius:14, padding:'14px 18px', animation:`fadeUp 0.4s ${i*0.06}s ease both` }}>
-              <div style={{ fontSize:20, marginBottom:4 }}>{icon}</div>
-              <div style={{ fontSize:22, fontWeight:700, color, fontFamily:"'Syne',sans-serif" }}>{val}</div>
-              <div style={{ fontSize:11, color:'#64748b', marginTop:1 }}>{label}</div>
+            { label:'Total Tickets',   val: tickets.length,                                        icon:'🎫', col:'#2563eb' },
+            { label:'Open / In Progress', val: tickets.filter(t=>['open','in_progress'].includes(t.status)).length, icon:'⏳', col:'#f59e0b' },
+            { label:'Resolved',        val: tickets.filter(t=>['resolved','closed'].includes(t.status)).length,    icon:'✅', col:'#10b981' },
+          ].map((st,i) => (
+            <div key={i} style={{ ...S.card, display:'flex', alignItems:'center', gap:14, padding:16, marginBottom:0 }}>
+              <div style={{ width:42, height:42, borderRadius:10, background:`${st.col}22`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:20 }}>{st.icon}</div>
+              <div>
+                <div style={{ fontSize:24, fontWeight:800, color:st.col }}>{st.val}</div>
+                <div style={{ fontSize:12, color:'#64748b' }}>{st.label}</div>
+              </div>
             </div>
           ))}
         </div>
 
-        {/* Search + Filter */}
-        <div style={{ display:'flex', gap:10, marginBottom:20, flexWrap:'wrap' }}>
-          <input className="inp" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="🔍 Search by name or email..."
-            style={{ flex:1, minWidth:200, padding:'9px 14px', background:'#111827', border:'1px solid #1f2d45', borderRadius:10, color:'#e2e8f0', fontFamily:"'DM Sans',sans-serif", fontSize:13 }}/>
-          <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-            {[['all','All'],['active','Active'],['inactive','Inactive'],['L1_AGENT','L1'],['L2_AGENT','L2'],['DEVELOPER','Dev'],['ADMIN','Admin'],['END_USER','Users']].map(([val,label]) => (
-              <button key={val} onClick={() => setFilter(val)} style={{ padding:'8px 14px', borderRadius:20, fontSize:12, cursor:'pointer', border:'1px solid', background:filter===val?'#1e3a5f':'transparent', color:filter===val?'#60a5fa':'#64748b', borderColor:filter===val?'#3b82f640':'#1f2d45', transition:'all 0.2s' }}>{label}</button>
-            ))}
-          </div>
+        {/* ── TABS ── */}
+        <div style={S.tabBar}>
+          <button style={S.tab(tab==='tickets')} onClick={() => setTab('tickets')}>🎫 My Tickets ({tickets.length})</button>
+          <button style={S.tab(tab==='new')}     onClick={startNewTicket}>+ Raise New Ticket</button>
         </div>
 
-        {/* User Table */}
-        <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:16, overflow:'hidden' }}>
-          <div style={{ padding:'14px 24px', borderBottom:'1px solid #1f2d45', display:'flex', justifyContent:'space-between' }}>
-            <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:15, fontWeight:700 }}>
-              All Users <span style={{ fontSize:12, color:'#475569', fontWeight:400 }}>({shown.length})</span>
-            </h2>
-            <button onClick={loadUsers} style={{ fontSize:12, color:'#475569', background:'transparent', border:'none', cursor:'pointer' }}>🔄 Refresh</button>
-          </div>
-          <div style={{ overflowX:'auto' }}>
-            <table style={{ width:'100%', borderCollapse:'collapse' }}>
-              <thead><tr style={{ background:'#0a0e1a' }}>
-                {['Name','Email','Role','Department','Status','Tickets','Actions'].map(h => (
-                  <th key={h} style={{ padding:'10px 14px', textAlign:'left', fontSize:10, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', whiteSpace:'nowrap' }}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {shown.map(u => {
-                  const rc = ROLE_COLOR[u.role] || ROLE_COLOR.END_USER
-                  const isActive = u.is_active !== false
-                  return (
-                    <tr key={u.id} className="urow" style={{ borderTop:'1px solid #1f2d45', transition:'background 0.15s', opacity:isActive?1:0.6 }}>
-                      <td style={{ padding:'12px 14px' }}>
-                        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                          <div style={{ width:34, height:34, borderRadius:'50%', background:`linear-gradient(135deg,${rc.bg},${rc.c}30)`, border:`1px solid ${rc.c}40`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:rc.c, flexShrink:0 }}>
-                            {(u.full_name||u.email||'U')[0].toUpperCase()}
-                          </div>
-                          <div>
-                            <div style={{ fontSize:13, fontWeight:600 }}>{u.full_name||'—'}</div>
-                            <div style={{ fontSize:10, color:'#475569' }}>ID: {u.id?.substring(0,8)}...</div>
-                          </div>
-                        </div>
+        {/* ══ TAB: MY TICKETS ══ */}
+        {tab === 'tickets' && (
+          <div style={S.card}>
+            {tickets.length === 0 ? (
+              <div style={{ textAlign:'center', padding:'40px 0' }}>
+                <div style={{ fontSize:40, marginBottom:12 }}>🎫</div>
+                <div style={{ color:'#64748b', marginBottom:16 }}>No tickets yet</div>
+                <button style={S.btn()} onClick={startNewTicket}>Raise Your First Ticket</button>
+              </div>
+            ) : (
+              <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom:'1px solid #1f2d45' }}>
+                    {['Ticket #','Title','Priority','Status','Date'].map(h => (
+                      <th key={h} style={{ padding:'8px 12px', textAlign:'left', fontSize:12, color:'#64748b', fontWeight:600 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tickets.map(t => (
+                    <tr key={t.id} onClick={() => router.push(`/tickets/${t.id}`)}
+                      style={{ borderBottom:'1px solid #1f2937', cursor:'pointer' }}
+                      onMouseOver={e=>e.currentTarget.style.background='#0f172a'}
+                      onMouseOut={e=>e.currentTarget.style.background='transparent'}>
+                      <td style={{ padding:'10px 12px', fontSize:12, color:'#06b6d4', fontWeight:600 }}>{t.ticket_number}</td>
+                      <td style={{ padding:'10px 12px', fontSize:13, color:'#e2e8f0', maxWidth:280 }}>
+                        <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.title}</div>
                       </td>
-                      <td style={{ padding:'12px 14px' }}><span style={{ fontSize:12, color:'#94a3b8' }}>{u.email}</span></td>
-                      <td style={{ padding:'12px 14px' }}>
-                        {/* Inline role change */}
-                        <select value={u.role||'END_USER'} onChange={e => changeRole(u.id, e.target.value)}
-                          style={{ fontSize:11, fontWeight:600, padding:'3px 8px', borderRadius:6, background:rc.bg, color:rc.c, border:`1px solid ${rc.c}40`, cursor:'pointer', outline:'none', fontFamily:"'DM Sans',sans-serif" }}>
-                          {ROLES.map(r => <option key={r} value={r} style={{ background:'#111827', color:'#e2e8f0' }}>{r}</option>)}
-                        </select>
-                      </td>
-                      <td style={{ padding:'12px 14px' }}><span style={{ fontSize:12, color:'#64748b' }}>{u.department||'—'}</span></td>
-                      <td style={{ padding:'12px 14px' }}>
-                        <span style={{ fontSize:11, fontWeight:600, padding:'3px 9px', borderRadius:20, background:isActive?'#052e16':'#1f2d45', color:isActive?'#34d399':'#475569', border:`1px solid ${isActive?'#10b98130':'#334155'}` }}>
-                          {isActive ? '✅ Active' : '🚫 Inactive'}
+                      <td style={{ padding:'10px 12px' }}>
+                        <span style={{ fontSize:11, fontWeight:600, color: PRIORITY[t.priority]?.color || '#fff' }}>
+                          {PRIORITY[t.priority]?.label || t.priority}
                         </span>
                       </td>
-                      <td style={{ padding:'12px 14px' }}><span style={{ fontSize:12, color:'#475569' }}>—</span></td>
-                      <td style={{ padding:'12px 14px' }}>
-                        <div style={{ display:'flex', gap:6 }}>
-                          <button className="rbtn" onClick={() => openEdit(u)}
-                            style={{ padding:'5px 10px', background:'#1e3a5f', border:'none', color:'#60a5fa', borderRadius:6, cursor:'pointer', fontSize:11, transition:'all 0.2s' }}>✏️ Edit</button>
-                          <button className="rbtn" onClick={() => setConfirm(u)}
-                            style={{ padding:'5px 10px', background:isActive?'#450a0a':'#052e16', border:'none', color:isActive?'#fca5a5':'#34d399', borderRadius:6, cursor:'pointer', fontSize:11, transition:'all 0.2s' }}>
-                            {isActive ? '🚫 Deactivate' : '✅ Activate'}
-                          </button>
-                        </div>
+                      <td style={{ padding:'10px 12px' }}>
+                        <span style={S.badge(t.status)}>{STATUS[t.status]?.label || t.status}</span>
+                      </td>
+                      <td style={{ padding:'10px 12px', fontSize:12, color:'#64748b' }}>
+                        {new Date(t.created_at).toLocaleDateString('en-IN')}
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            {shown.length === 0 && (
-              <div style={{ padding:40, textAlign:'center' }}>
-                <div style={{ fontSize:36, marginBottom:10 }}>👥</div>
-                <p style={{ color:'#475569' }}>No users found</p>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* ══ TAB: NEW TICKET ══ */}
+        {tab === 'new' && (
+          <div>
+            {/* AI Help Banner */}
+            <div style={{ background:'linear-gradient(135deg,#1e1b4b,#1e3a5f)', border:'1px solid #4f46e5', borderRadius:12, padding:'14px 20px', marginBottom:20, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <div>
+                <div style={{ fontWeight:700, color:'#a5b4fc', fontSize:14 }}>🤖 Try AI Resolution First!</div>
+                <div style={{ color:'#64748b', fontSize:12, marginTop:2 }}>80% of issues are resolved instantly — no ticket needed.</div>
+              </div>
+              <button onClick={() => router.push('/ai-resolution')}
+                style={{ padding:'8px 18px', background:'linear-gradient(135deg,#6366f1,#8b5cf6)', border:'none', borderRadius:8, color:'#fff', cursor:'pointer', fontSize:13, fontWeight:600, whiteSpace:'nowrap' }}>
+                Get AI Help →
+              </button>
+            </div>
+
+            {submitted ? (
+              /* ── SUCCESS STATE ── */
+              <div style={{ ...S.card, textAlign:'center', padding:'48px 24px' }}>
+                <div style={{ fontSize:48, marginBottom:16 }}>✅</div>
+                <h2 style={{ margin:'0 0 8px', color:'#34d399', fontSize:22 }}>Ticket Raised Successfully!</h2>
+                <p style={{ color:'#64748b', margin:'0 0 8px' }}>Our support team has been notified and will get back to you shortly.</p>
+                {screenshot && (
+                  <p style={{ color:'#a5b4fc', fontSize:13, margin:'0 0 20px' }}>📸 Screenshot uploaded — AI is analyzing it for faster resolution.</p>
+                )}
+                <div style={{ display:'flex', gap:12, justifyContent:'center', marginTop:20 }}>
+                  <button style={S.btn()} onClick={() => { setTab('tickets'); setSubmitted(false) }}>
+                    View My Tickets
+                  </button>
+                  <button style={{ ...S.btn('#1f2937'), border:'1px solid #1f2d45' }} onClick={startNewTicket}>
+                    Raise Another
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ── FORM ── */
+              <div style={S.card}>
+                <h2 style={{ margin:'0 0 20px', fontSize:18, fontWeight:700, color:'#e2e8f0' }}>📝 Raise a Support Ticket</h2>
+
+                {/* Title */}
+                <div style={{ marginBottom:16 }}>
+                  <label style={S.label}>Issue Title *</label>
+                  <input
+                    style={S.input}
+                    placeholder="e.g. SIP payment failed, Unable to login, NAV not loading..."
+                    value={form.title}
+                    onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                  />
+                </div>
+
+                {/* Description */}
+                <div style={{ marginBottom:16 }}>
+                  <label style={S.label}>Describe Your Issue *</label>
+                  <textarea
+                    style={{ ...S.input, height:110, resize:'vertical' }}
+                    placeholder="Please describe what happened, what you were doing when it occurred, and any error messages you saw..."
+                    value={form.description}
+                    onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                  />
+                </div>
+
+                {/* Priority */}
+                <div style={{ marginBottom:20 }}>
+                  <label style={S.label}>Priority</label>
+                  <div style={{ display:'flex', gap:8 }}>
+                    {['low','medium','high','critical'].map(p => (
+                      <button key={p} onClick={() => setForm(f => ({ ...f, priority: p }))}
+                        style={{ padding:'7px 18px', borderRadius:8, border:`2px solid ${form.priority===p ? PRIORITY[p].color : '#1f2d45'}`,
+                                 background: form.priority===p ? `${PRIORITY[p].color}22` : 'transparent',
+                                 color: PRIORITY[p].color, cursor:'pointer', fontSize:12, fontWeight:600, textTransform:'capitalize', transition:'all 0.15s' }}>
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* ── SCREENSHOT UPLOAD ── */}
+                <div style={{ marginBottom:20 }}>
+                  <label style={S.label}>📸 Attach Screenshot (Optional)</label>
+                  <div
+                    onClick={() => !screenshot && fileRef.current?.click()}
+                    onDragOver={e => { e.preventDefault(); }}
+                    onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) { const inp = fileRef.current; const dt = new DataTransfer(); dt.items.add(f); inp.files = dt.files; handleFile({ target: inp }) } }}
+                    style={{
+                      border: `2px dashed ${screenshot ? '#10b981' : '#1f2d45'}`,
+                      borderRadius:10, padding:20, textAlign:'center',
+                      background: screenshot ? '#022c2222' : '#0f172a',
+                      cursor: screenshot ? 'default' : 'pointer',
+                      transition:'all 0.2s'
+                    }}>
+
+                    {screenshot ? (
+                      /* Preview */
+                      <div>
+                        <img src={screenshot.preview} alt="screenshot"
+                          style={{ maxWidth:'100%', maxHeight:200, borderRadius:8, marginBottom:10, border:'1px solid #1f2d45' }} />
+                        <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:10 }}>
+                          <span style={{ fontSize:12, color:'#34d399' }}>✅ {screenshot.name}</span>
+                          <button onClick={e => { e.stopPropagation(); removeScreenshot() }}
+                            style={{ padding:'3px 10px', background:'#450a0a', border:'1px solid #ef4444', borderRadius:6, color:'#ef4444', cursor:'pointer', fontSize:11 }}>
+                            Remove
+                          </button>
+                        </div>
+                        <div style={{ fontSize:11, color:'#64748b', marginTop:6 }}>
+                          🤖 AI will analyze this screenshot for faster diagnosis
+                        </div>
+                      </div>
+                    ) : (
+                      /* Upload prompt */
+                      <div>
+                        <div style={{ fontSize:32, marginBottom:8 }}>📷</div>
+                        <div style={{ color:'#94a3b8', fontSize:13, marginBottom:4 }}>
+                          Click to upload or drag & drop
+                        </div>
+                        <div style={{ color:'#475569', fontSize:11 }}>PNG, JPG, GIF up to 5MB</div>
+                      </div>
+                    )}
+                  </div>
+                  <input ref={fileRef} type="file" accept="image/*" style={{ display:'none' }} onChange={handleFile} />
+                </div>
+
+                {/* Error message */}
+                {submitMsg && (
+                  <div style={{ padding:'10px 14px', background:'#450a0a', border:'1px solid #ef4444', borderRadius:8, color:'#fca5a5', fontSize:13, marginBottom:16 }}>
+                    {submitMsg}
+                  </div>
+                )}
+
+                {/* Submit */}
+                <div style={{ display:'flex', gap:12 }}>
+                  <button onClick={handleSubmit} disabled={submitting}
+                    style={{ ...S.btn(), opacity: submitting ? 0.6 : 1, cursor: submitting ? 'not-allowed' : 'pointer' }}>
+                    {submitting ? '⏳ Submitting...' : '🚀 Submit Ticket'}
+                  </button>
+                  <button onClick={() => router.push('/ai-resolution')}
+                    style={{ ...S.btn('#6366f1') }}>
+                    🤖 Try AI Help Instead
+                  </button>
+                </div>
               </div>
             )}
           </div>
-        </div>
+        )}
       </div>
-
-      {/* ── Create/Edit Modal ── */}
-      {showForm && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:500, animation:'fadeIn 0.2s ease' }}>
-          <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:20, padding:'28px 32px', width:480, maxWidth:'95vw', animation:'fadeUp 0.3s ease' }}>
-            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
-              <h2 style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:800 }}>{editUser ? '✏️ Edit User' : '+ Create New User'}</h2>
-              <button onClick={() => { setShowForm(false); setMsg('') }} style={{ background:'transparent', border:'none', color:'#475569', cursor:'pointer', fontSize:20 }}>✕</button>
-            </div>
-
-            {msg && <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:16, background:msg.startsWith('✅')?'#052e16':'#450a0a', color:msg.startsWith('✅')?'#34d399':'#fca5a5', fontSize:13 }}>{msg}</div>}
-
-            <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-              {[
-                { label:'Full Name *', key:'full_name', type:'text', placeholder:'e.g. Rahul Sharma' },
-                { label:'Email *',    key:'email',     type:'email', placeholder:'e.g. rahul@company.com', disabled:!!editUser },
-                { label:'Department', key:'department', type:'text', placeholder:'e.g. IT, HR, Finance' },
-                { label:'Phone',      key:'phone',      type:'tel',  placeholder:'e.g. +91 98765 43210' },
-              ].map(f => (
-                <div key={f.key}>
-                  <label style={{ fontSize:12, fontWeight:600, color:'#475569', display:'block', marginBottom:6 }}>{f.label}</label>
-                  <input className="inp" type={f.type} value={form[f.key]} disabled={f.disabled}
-                    onChange={e => setForm(p => ({...p, [f.key]:e.target.value}))}
-                    placeholder={f.placeholder}
-                    style={{ width:'100%', padding:'10px 12px', background:f.disabled?'#0a0e1a':'#0f172a', border:'1px solid #1f2d45', borderRadius:9, color:f.disabled?'#475569':'#e2e8f0', fontFamily:"'DM Sans',sans-serif", fontSize:13, boxSizing:'border-box', cursor:f.disabled?'not-allowed':'text' }}/>
-                </div>
-              ))}
-
-              {/* Role */}
-              <div>
-                <label style={{ fontSize:12, fontWeight:600, color:'#475569', display:'block', marginBottom:6 }}>Role *</label>
-                <select value={form.role} onChange={e => setForm(p => ({...p, role:e.target.value}))}
-                  style={{ width:'100%', padding:'10px 12px', background:'#0f172a', border:'1px solid #1f2d45', borderRadius:9, color:'#e2e8f0', fontFamily:"'DM Sans',sans-serif", fontSize:13, outline:'none', cursor:'pointer' }}>
-                  {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </div>
-
-              {/* Active toggle — edit only */}
-              {editUser && (
-                <div style={{ display:'flex', alignItems:'center', gap:12 }}>
-                  <label style={{ fontSize:12, fontWeight:600, color:'#475569' }}>Account Status:</label>
-                  <button onClick={() => setForm(p => ({...p, is_active:!p.is_active}))}
-                    style={{ padding:'6px 16px', borderRadius:20, fontSize:12, fontWeight:600, cursor:'pointer', border:'1px solid', background:form.is_active?'#052e16':'#450a0a', color:form.is_active?'#34d399':'#fca5a5', borderColor:form.is_active?'#10b98130':'#ef444430' }}>
-                    {form.is_active ? '✅ Active' : '🚫 Inactive'}
-                  </button>
-                </div>
-              )}
-
-              {!editUser && (
-                <div style={{ background:'#0f172a', borderRadius:8, padding:'10px 14px', fontSize:12, color:'#64748b' }}>
-                  🔑 Default password: <strong style={{ color:'#fbbf24' }}>NexDesk@123</strong> — user must change on first login
-                </div>
-              )}
-            </div>
-
-            <div style={{ display:'flex', gap:10, marginTop:24 }}>
-              <button onClick={saveUser} disabled={saving}
-                style={{ flex:1, padding:'12px', background:'linear-gradient(135deg,#2563eb,#3b82f6)', border:'none', borderRadius:10, color:'#fff', cursor:saving?'not-allowed':'pointer', fontSize:14, fontWeight:600, display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
-                {saving ? <><div style={{ width:16, height:16, borderRadius:'50%', border:'2px solid rgba(255,255,255,0.3)', borderTopColor:'#fff', animation:'spin 0.7s linear infinite' }}/>Saving...</> : editUser ? '💾 Update User' : '+ Create User'}
-              </button>
-              <button onClick={() => { setShowForm(false); setMsg('') }}
-                style={{ padding:'12px 20px', background:'transparent', border:'1px solid #1f2d45', borderRadius:10, color:'#64748b', cursor:'pointer', fontSize:14 }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Confirm Modal ── */}
-      {confirm && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:500, animation:'fadeIn 0.2s ease' }}>
-          <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:16, padding:'28px 32px', width:400, maxWidth:'95vw', textAlign:'center' }}>
-            <div style={{ fontSize:48, marginBottom:16 }}>{confirm.is_active!==false ? '🚫' : '✅'}</div>
-            <h3 style={{ fontFamily:"'Syne',sans-serif", fontSize:18, fontWeight:700, marginBottom:8 }}>
-              {confirm.is_active!==false ? 'Deactivate User?' : 'Activate User?'}
-            </h3>
-            <p style={{ color:'#64748b', fontSize:13, marginBottom:24 }}>
-              {confirm.is_active!==false
-                ? `${confirm.full_name||confirm.email} will lose access to NexDesk immediately.`
-                : `${confirm.full_name||confirm.email} will regain access to NexDesk.`}
-            </p>
-            <div style={{ display:'flex', gap:10 }}>
-              <button onClick={() => toggleActive(confirm)}
-                style={{ flex:1, padding:'11px', background:confirm.is_active!==false?'#ef4444':'#10b981', border:'none', borderRadius:10, color:'#fff', cursor:'pointer', fontSize:14, fontWeight:600 }}>
-                {confirm.is_active!==false ? '🚫 Deactivate' : '✅ Activate'}
-              </button>
-              <button onClick={() => setConfirm(null)}
-                style={{ flex:1, padding:'11px', background:'transparent', border:'1px solid #1f2d45', borderRadius:10, color:'#64748b', cursor:'pointer', fontSize:14 }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
-}
-
-function Loader() {
-  return <div style={{ minHeight:'100vh', background:'#0a0e1a', display:'flex', alignItems:'center', justifyContent:'center' }}><div style={{ width:40, height:40, borderRadius:'50%', border:'3px solid #1f2d45', borderTopColor:'#3b82f6', animation:'spin 0.7s linear infinite' }}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>
 }

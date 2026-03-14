@@ -1,37 +1,39 @@
-import { createServerClient } from '@supabase/ssr'
+import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 
-export async function middleware(request) {
-  let response = NextResponse.next({ request })
+export async function middleware(req) {
+  const pathname = req.nextUrl.pathname
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    {
-      cookies: {
-        getAll() { return request.cookies.getAll() },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          response = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
-        },
-      },
+  // Public routes — skip everything
+  if (
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/register') ||
+    pathname.startsWith('/api') ||
+    pathname.startsWith('/_next') ||
+    pathname.includes('.')
+  ) {
+    return NextResponse.next()
+  }
+
+  // Get session token from cookie
+  const cookieHeader = req.headers.get('cookie') || ''
+  
+  // Look for supabase auth token in cookies
+  const hasSession = cookieHeader.includes('sb-') && 
+                     (cookieHeader.includes('-auth-token') || cookieHeader.includes('access_token'))
+
+  // Not logged in → redirect to login
+  if (!hasSession) {
+    if (pathname !== '/login') {
+      return NextResponse.redirect(new URL('/login', req.url))
     }
-  )
-
-  const { data: { user } } = await supabase.auth.getUser()
-  const { pathname } = request.nextUrl
-
-  if (!user && (pathname.startsWith('/dashboard') || pathname.startsWith('/tickets'))) {
-    return NextResponse.redirect(new URL('/login', request.url))
-  }
-  if (user && pathname === '/login') {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  return response
+  return NextResponse.next()
 }
 
 export const config = {
-  matcher: ['/login', '/dashboard/:path*', '/tickets/:path*'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.png|.*\\.svg|.*\\.jpg|.*\\.ico).*)',
+  ],
 }

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
 import { STATUS_CONFIG, PRIORITY_CONFIG, getSLAStatus } from '../../../lib/ticketRouter'
-import GlobalNav from '../../../components/GlobalNav'
+import GlobalNav from '../../components/GlobalNav'
 
 export default function L1Dashboard() {
   const router   = useRouter()
@@ -34,14 +34,14 @@ export default function L1Dashboard() {
 
   const filtered = filter === 'all' ? tickets : tickets.filter(t => {
     if (filter === 'critical') return t.priority === 'critical'
-    if (filter === 'breached') return getSLAStatus(t.sla_resolve_due, t.status).label === 'BREACHED'
+    if (filter === 'breached') return getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority).label === 'BREACHED'
     return t.status === filter
   })
 
   const stats = {
     total:    tickets.length,
     open:     tickets.filter(t => t.status === 'open').length,
-    breached: tickets.filter(t => getSLAStatus(t.sla_resolve_due, t.status).label === 'BREACHED').length,
+    breached: tickets.filter(t => getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority).label === 'BREACHED').length,
     critical: tickets.filter(t => t.priority === 'critical').length,
   }
 
@@ -98,7 +98,7 @@ export default function L1Dashboard() {
                 </tr></thead>
                 <tbody>
                   {filtered.map(t => {
-                    const sla  = getSLAStatus(t.sla_resolve_due, t.status)
+                    const sla  = getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority)
                     const stat = STATUS_CONFIG[t.status]     || STATUS_CONFIG.open
                     const prio = PRIORITY_CONFIG[t.priority] || PRIORITY_CONFIG.medium
                     return (

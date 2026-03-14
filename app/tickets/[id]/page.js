@@ -43,8 +43,30 @@ export default function TicketDetail() {
   }
 
   async function loadComments() {
-    const { data } = await supabase.from('ticket_comments').select('*, profiles(full_name,email,role)').eq('ticket_id', ticketId).order('created_at', { ascending: true })
-    setComments(data || [])
+    // Fetch comments WITHOUT profiles join (RLS on profiles blocks the join)
+    const { data, error } = await supabase
+      .from('ticket_comments')
+      .select('id, ticket_id, user_id, comment_text, is_internal, created_at')
+      .eq('ticket_id', ticketId)
+      .order('created_at', { ascending: true })
+
+    if (error) { console.error('loadComments error:', error); return }
+    const rows = data || []
+
+    // Fetch profile names separately for each unique user_id
+    const userIds = [...new Set(rows.map(c => c.user_id).filter(Boolean))]
+    let profileMap = {}
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, role')
+        .in('id', userIds)
+      ;(profiles || []).forEach(p => { profileMap[p.id] = p })
+    }
+
+    // Attach profile to each comment
+    const enriched = rows.map(c => ({ ...c, profiles: profileMap[c.user_id] || null }))
+    setComments(enriched)
   }
 
   async function loadHistory() {
@@ -118,7 +140,7 @@ export default function TicketDetail() {
     </div>
   )
 
-  const sla  = getSLAStatus(ticket.sla_resolve_due, ticket.status)
+  const sla  = getSLAStatus(ticket.sla_resolve_due, ticket.status, ticket.created_at, ticket.priority)
   const stat = STATUS_CONFIG[ticket.status]     || STATUS_CONFIG.open
   const prio = PRIORITY_CONFIG[ticket.priority] || PRIORITY_CONFIG.medium
   const role = profile?.role
@@ -173,7 +195,7 @@ export default function TicketDetail() {
             {ticket.description && (
               <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px 24px', marginBottom:16 }}>
                 <div style={{ fontSize:12, fontWeight:600, color:'#475569', textTransform:'uppercase', letterSpacing:'0.5px', marginBottom:12 }}>📝 Description</div>
-                <p style={{ color:'#cbd5e1', fontSize:14, lineHeight:1.8, whiteSpace:'pre-wrap' }}>{ticket.description}</p>
+                <p style={{ color:'#cbd5e1', fontSize:14, lineHeight:1.8, whiteSpace:'pre-wrap', wordBreak:'break-word', overflowWrap:'anywhere' }}>{ticket.description}</p>
               </div>
             )}
 
@@ -324,7 +346,7 @@ export default function TicketDetail() {
                       </div>
                       <span style={{ fontSize:11, color:'#334155', marginLeft:'auto' }}>{new Date(c.created_at).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</span>
                     </div>
-                    <div style={{ fontSize:14, color:'#cbd5e1', paddingLeft:38, lineHeight:1.8, whiteSpace:'pre-wrap' }}>{c.comment_text}</div>
+                    <div style={{ fontSize:14, color:'#cbd5e1', paddingLeft:38, lineHeight:1.8, whiteSpace:'pre-wrap', wordBreak:'break-word', overflowWrap:'anywhere' }}>{c.comment_text}</div>
                   </div>
                 ))}
                 <form onSubmit={postComment} style={{ marginTop:16, borderTop:'1px solid #1f2d45', paddingTop:16 }}>

@@ -2,7 +2,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
-import GlobalNav from '../../../components/GlobalNav'
+import GlobalNav from '../../components/GlobalNav'
 
 // Suggested prompts for admin
 const SUGGESTED_PROMPTS = [

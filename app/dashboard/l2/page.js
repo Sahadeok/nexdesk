@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
 import { STATUS_CONFIG, PRIORITY_CONFIG, getSLAStatus } from '../../../lib/ticketRouter'
-import GlobalNav from '../../../components/GlobalNav'
+import GlobalNav from '../../components/GlobalNav'
 
 export default function L2Dashboard() {
   const router   = useRouter()
@@ -39,7 +39,7 @@ export default function L2Dashboard() {
 
   const filtered = filter === 'all' ? tickets : tickets.filter(t => {
     if (filter === 'critical')  return t.priority === 'critical'
-    if (filter === 'breached')  return getSLAStatus(t.sla_resolve_due, t.status).label === 'BREACHED'
+    if (filter === 'breached')  return getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority).label === 'BREACHED'
     if (filter === 'escalated') return t.escalated_to_l2 === true
     if (filter === 'developer') return t.assigned_team === 'DEVELOPER'
     if (filter === 'l2only')    return t.assigned_team === 'L2'
@@ -51,7 +51,7 @@ export default function L2Dashboard() {
     l2only:    tickets.filter(t => t.assigned_team === 'L2').length,
     escalated: tickets.filter(t => t.escalated_to_l2 === true).length,
     developer: tickets.filter(t => t.assigned_team === 'DEVELOPER').length,
-    breached:  tickets.filter(t => getSLAStatus(t.sla_resolve_due, t.status).label === 'BREACHED').length,
+    breached:  tickets.filter(t => getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority).label === 'BREACHED').length,
     critical:  tickets.filter(t => t.priority === 'critical').length,
   }
 
@@ -119,7 +119,7 @@ export default function L2Dashboard() {
                 </tr></thead>
                 <tbody>
                   {filtered.map(t => {
-                    const sla  = getSLAStatus(t.sla_resolve_due, t.status)
+                    const sla  = getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority)
                     const stat = STATUS_CONFIG[t.status]     || STATUS_CONFIG.open
                     const prio = PRIORITY_CONFIG[t.priority] || PRIORITY_CONFIG.medium
                     const tc   = t.assigned_team==='DEVELOPER'?{bg:'#083344',c:'#06b6d4'}:t.assigned_team==='L2'?{bg:'#2e1065',c:'#a78bfa'}:{bg:'#1e3a5f',c:'#60a5fa'}

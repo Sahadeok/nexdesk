@@ -10,6 +10,10 @@ export default function DashboardRouter() {
   useEffect(() => { route() }, [])
 
   async function route() {
+    // ✅ Force clear Next.js cache before reading session
+    router.refresh()
+    await new Promise(r => setTimeout(r, 100))
+
     const { user, profile } = await getCurrentUserProfile(supabase)
     if (!user) { router.replace('/login'); return }
 

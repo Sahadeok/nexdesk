@@ -1,8 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
-import GlobalNav from '../../components/GlobalNav'
+import { createClient, getCurrentUserProfile } from '../../lib/supabase'
+import GlobalNav from '../components/GlobalNav'
 
 const CATEGORIES = [
   { key:'all',            icon:'📚', label:'All Articles' },

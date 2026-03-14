@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
 import { STATUS_CONFIG, PRIORITY_CONFIG, getSLAStatus } from '../../../lib/ticketRouter'
-import GlobalNav from '../../../components/GlobalNav'
+import GlobalNav from '../../components/GlobalNav'
 
 export default function AdminDashboard() {
   const router   = useRouter()
@@ -38,7 +38,7 @@ export default function AdminDashboard() {
   const l2T      = active.filter(t => t.assigned_team === 'L2')
   const devT     = active.filter(t => t.assigned_team === 'DEVELOPER')
   const escT     = active.filter(t => t.escalated_to_l2 === true)
-  const breached = active.filter(t => getSLAStatus(t.sla_resolve_due, t.status).label === 'BREACHED')
+  const breached = active.filter(t => getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority).label === 'BREACHED')
   const critical = active.filter(t => t.priority === 'critical')
 
   const shown = tab==='l1'?l1T:tab==='l2'?l2T:tab==='developer'?devT:tab==='escalated'?escT:tab==='breached'?breached:tab==='resolved'?resolved:tab==='critical'?critical:active
@@ -68,6 +68,15 @@ export default function AdminDashboard() {
             { icon:'📋', title:'Ticket Templates',    desc:'Manage pre-built templates for common IT issues to speed up ticket creation.', color:'#fb923c', border:'#f9731640', bg:'linear-gradient(135deg,#1c0a00,#431407)', path:'/dashboard/templates' },
             { icon:'⚙️', title:'SLA Auto Engine',     desc:'Monitor SLA deadlines, auto-escalate breached tickets and view engine run history.', color:'#fbbf24', border:'#f59e0b40', bg:'linear-gradient(135deg,#161005,#1a1208)', path:'/dashboard/sla-engine' },
             { icon:'📚', title:'Knowledge Base',      desc:'Create and manage help articles. Users can self-solve before raising tickets.', color:'#06b6d4', border:'#06b6d440', bg:'linear-gradient(135deg,#031a22,#083344)', path:'/dashboard/kb-admin' },
+            { icon:'⚡', title:'Bulk Actions',       desc:'Select multiple tickets and update status, team, priority or export to CSV.', color:'#a78bfa', border:'#8b5cf640', bg:'linear-gradient(135deg,#1a0a2e,#2e1065)', path:'/dashboard/bulk-actions' },
+            { icon:'📺', title:'Executive View',     desc:'Live big-screen dashboard with real-time stats, SLA health and weekly trends.', color:'#34d399', border:'#10b98140', bg:'linear-gradient(135deg,#022c22,#052e16)', path:'/dashboard/executive' },
+            { icon:'🔍', title:'Health Monitor',    desc:'Real-time API uptime, response times and auto-incident creation for critical services.', color:'#06b6d4', border:'#06b6d440', bg:'linear-gradient(135deg,#031a22,#083344)', path:'/dashboard/health' },
+            { icon:'🤖', title:'AI Resolution',     desc:'Instant AI-powered resolution engine — detect, diagnose and fix issues before raising a ticket.', color:'#a5b4fc', border:'#6366f140', bg:'linear-gradient(135deg,#0d0d1f,#1e1b4b)', path:'/ai-resolution' },
+            { icon:'🎫', title:'Smart Ticket',      desc:'AI-assisted ticket creation with auto-fill from error logs, stack traces and pattern detection.', color:'#fb923c', border:'#f9731640', bg:'linear-gradient(135deg,#1c0a00,#431407)', path:'/tickets/new' },
+            { icon:'🔭', title:'E2E Monitor',       desc:'Unified end-to-end view across frontend, APIs, backend, database and third-party services.', color:'#34d399', border:'#10b98140', bg:'linear-gradient(135deg,#022c22,#052e16)', path:'/dashboard/e2e' },
+            { icon:'🧠', title:'AI Intelligence',   desc:'Auto-diagnosis, session intelligence, screenshot analysis, CloudWatch logs & resolution memory.', color:'#f472b6', border:'#ec489940', bg:'linear-gradient(135deg,#1a0a2e,#2e0a3a)', path:'/dashboard/ai-intelligence' },
+            { icon:'🔮', title:'Predictive Prevention', desc:'AI predicts service failures 15-30 mins before they happen. Auto P0 tickets. Live risk scores per service.', color:'#c084fc', border:'#c084fc40', bg:'linear-gradient(135deg,#1e0a2e,#2e1065)', path:'/dashboard/predictions' },
+            { icon:'📋', title:'Compliance Engine',     desc:'Auto-generate RBI & SEBI audit reports in one click. Live compliance score. SLA breach tracker. Audit trail.', color:'#34d399', border:'#10b98140', bg:'linear-gradient(135deg,#022c22,#064e3b)', path:'/dashboard/compliance' },
           ].map((card,i) => (
             <div key={card.title}
               onClick={() => router.push(card.path)}
@@ -164,7 +173,7 @@ export default function AdminDashboard() {
                 </tr></thead>
                 <tbody>
                   {shown.map(t => {
-                    const sla  = getSLAStatus(t.sla_resolve_due, t.status)
+                    const sla  = getSLAStatus(t.sla_resolve_due, t.status, t.created_at, t.priority)
                     const stat = STATUS_CONFIG[t.status]     || STATUS_CONFIG.open
                     const prio = PRIORITY_CONFIG[t.priority] || PRIORITY_CONFIG.medium
                     const tc   = t.assigned_team==='DEVELOPER'?{bg:'#083344',c:'#06b6d4'}:t.assigned_team==='L2'?{bg:'#2e1065',c:'#a78bfa'}:{bg:'#1e3a5f',c:'#60a5fa'}

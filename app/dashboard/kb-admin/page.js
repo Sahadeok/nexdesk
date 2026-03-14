@@ -74,7 +74,7 @@ The company uses **Cisco AnyConnect** for VPN access. This guide covers setup an
 - Check your internet connection first
 - Ensure you're not already on the company network
 - Try disconnecting and reconnecting
-- Restart the AnyConnect service: `Services → Cisco AnyConnect → Restart`
+- Restart the AnyConnect service: Services -> Cisco AnyConnect -> Restart
 
 ### Authentication Failed
 - Verify your username (use full email, not just name)
@@ -83,7 +83,7 @@ The company uses **Cisco AnyConnect** for VPN access. This guide covers setup an
 
 ### VPN Connected but Cannot Access Resources
 - Disconnect VPN and reconnect
-- Clear DNS cache: open CMD and run `ipconfig /flushdns`
+- Clear DNS cache: open CMD and run ipconfig /flushdns
 - Check if specific resource is down (not VPN issue)
 
 ### Slow VPN Connection
@@ -110,7 +110,7 @@ This guide helps you configure Microsoft Outlook with your company Office 365 em
 
 ## Auto Setup (Recommended)
 1. Open **Microsoft Outlook**
-2. Click **File → Add Account**
+2. Click **File -> Add Account**
 3. Enter your company email address
 4. Click **Connect**
 5. Outlook will auto-detect Office 365 settings
@@ -132,9 +132,9 @@ Use these settings:
 
 ## Setup on Mobile
 1. Download **Microsoft Outlook** from App Store / Play Store
-2. Open app → Add Account → Add Email Account
-3. Enter your company email → Continue
-4. Enter password → Sign In
+2. Open app -> Add Account -> Add Email Account
+3. Enter your company email -> Continue
+4. Enter password -> Sign In
 5. Allow required permissions
 
 ## Common Issues
@@ -244,14 +244,14 @@ Multi-Factor Authentication adds an extra layer of security. Even if your passwo
 ## Setup Microsoft Authenticator (Recommended)
 1. Download **Microsoft Authenticator** on your phone (iOS/Android)
 2. Go to **myaccount.microsoft.com**
-3. Click **Security Info → Add Method**
+3. Click **Security Info -> Add Method**
 4. Select **Authenticator App**
-5. Open the app → **+** → **Work or school account**
+5. Open the app -> **+** -> **Work or school account**
 6. Scan the QR code shown on screen
 7. Enter the 6-digit code to verify
 
 ## Alternative: SMS Authentication
-1. Go to **Security Info → Add Method**
+1. Go to **Security Info -> Add Method**
 2. Select **Phone**
 3. Enter your mobile number
 4. Enter the verification code sent via SMS
