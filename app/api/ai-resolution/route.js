@@ -29,3 +29,4 @@ Be concise, practical, and specific. Do not repeat the standard steps.`
     return NextResponse.json({ suggestion: '' })
   }
 }
+

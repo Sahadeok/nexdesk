@@ -130,3 +130,4 @@ async function checkRecentNotification(ticketId, userId, type, cooldownMinutes) 
     .limit(1)
   return data && data.length > 0
 }
+

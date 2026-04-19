@@ -214,9 +214,9 @@ export default function SmartTicket() {
       setSubmitted(true)
       setForm(t => ({ ...t, _ticketId: ticket.id, _ticketNum: ticket.ticket_number }))
 
-      // 🤖 Auto-trigger AI Diagnosis in background
+      // 🤖 Auto-trigger Autonomous AI Agent in background
       try {
-        fetch('/api/ticket-diagnosis', {
+        fetch('/api/autonomous-agent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ticket_id: ticket.id })
@@ -430,3 +430,4 @@ export default function SmartTicket() {
 function Loader() {
   return <div style={{ minHeight:'100vh', background:'#0a0e1a', display:'flex', alignItems:'center', justifyContent:'center' }}><div style={{ width:40,height:40,borderRadius:'50%',border:'3px solid #1f2d45',borderTopColor:'#06b6d4',animation:'spin 0.7s linear infinite' }}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>
 }
+

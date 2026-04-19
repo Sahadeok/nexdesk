@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Widget Test Page</title>
+  <script
+    src="http://localhost:3000/nexdesk-widget-v3.js"
+    data-nexdesk-url="http://localhost:3000"
+    data-app-id="test_app_123"
+    data-app-name="Test Application"
+    async>
+  </script>
+  <style>
+    body { font-family: sans-serif; padding: 50px; }
+    button { padding: 10px 20px; font-size: 16px; margin-right: 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Test Widget Integration</h1>
+  <p>This page embeds the NexDesk widget. Click the buttons to simulate errors that the widget will catch and send to the <strong>app-watcher</strong> and <strong>error-surge</strong> APIs.</p>
+  
+  <button id="btn-error">Throw JS Error (3x to test Surge)</button>
+  <button id="btn-failure">Simulate 500 API Failure</button>
+  
+  <script>
+    document.getElementById('btn-error').addEventListener('click', () => {
+      // Throw identical error 3 times quickly to trigger error surge detection
+      for (let i = 0; i < 3; i++) {
+        setTimeout(() => {
+          throw new Error("Simulated Uncaught TypeError: Cannot read property 'foo' of undefined");
+        }, i * 100);
+      }
+    });
+
+    document.getElementById('btn-failure').addEventListener('click', () => {
+      // Simulate API failure
+      fetch('https://httpstat.us/500').catch(e => console.error("Caught internally by fetch", e));
+    });
+  </script>
+</body>
+</html>

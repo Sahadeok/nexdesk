@@ -1,8 +1,8 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient, getProfile } from '../../../lib/supabase'
-import Topbar from '../../components/TopBar'
+import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
+import TopBar from '../../components/TopBar'
 
 const PC = { critical:'#ef4444', high:'#f59e0b', medium:'#3b82f6', low:'#10b981' }
 const TEAM_COLOR = { L1:'#3b82f6', L2:'#8b5cf6', DEVELOPER:'#f59e0b' }
@@ -27,14 +27,13 @@ export default function ManagerDashboard() {
   useEffect(() => {
     async function load() {
       const sb = createClient()
-      const { data: { user } } = await sb.auth.getUser()
+      const { user, profile: p } = await getCurrentUserProfile(sb)
       if (!user) { router.replace('/login'); return }
-      const p = await getProfile(sb, user.id)
       setProfile(p)
-      if (p?.role_code === 'END_USER') { router.replace('/dashboard/user'); return }
-      if (p?.role_code === 'L1_AGENT') { router.replace('/dashboard/l1'); return }
-      if (p?.role_code === 'L2_AGENT') { router.replace('/dashboard/l2'); return }
-      if (p?.role_code === 'DEVELOPER') { router.replace('/dashboard/developer'); return }
+      if (p?.role === 'END_USER') { router.replace('/dashboard/user'); return }
+      if (p?.role === 'L1_AGENT') { router.replace('/dashboard/l1'); return }
+      if (p?.role === 'L2_AGENT') { router.replace('/dashboard/l2'); return }
+      if (p?.role === 'DEVELOPER') { router.replace('/dashboard/developer'); return }
       const { data } = await sb.from('tickets')
         .select('*').eq('is_deleted', false)
         .order('created_at', { ascending: false })
@@ -77,7 +76,7 @@ export default function ManagerDashboard() {
       `}</style>
 
       <div style={{ minHeight:'100vh', background:'#0a0e1a', fontFamily:"'DM Sans',sans-serif", color:'#e2e8f0' }}>
-        <Topbar profile={profile} title="Manager Dashboard" subtitle="Full visibility across all tickets & teams" />
+        <TopBar profile={profile} title="Manager Dashboard" subtitle="Full visibility across all tickets & teams" />
 
         <div style={{ maxWidth:1200, margin:'0 auto', padding:'28px 20px' }}>
 
@@ -187,3 +186,4 @@ export default function ManagerDashboard() {
     </>
   )
 }
+

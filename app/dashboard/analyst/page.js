@@ -39,7 +39,7 @@ export default function AIAnalyst() {
   async function init() {
     const { user, profile: p } = await getCurrentUserProfile(supabase)
     if (!user) { router.replace('/login'); return }
-    if (!['ADMIN','IT_MANAGER'].includes(p?.role)) { router.replace('/dashboard'); return }
+    if (!['SUPER_ADMIN','ADMIN','IT_MANAGER'].includes(p?.role)) { router.replace('/dashboard'); return }
     await fetchAllData()
     setFetching(false)
   }
@@ -528,3 +528,4 @@ INSTRUCTIONS:
     </div>
   )
 }
+

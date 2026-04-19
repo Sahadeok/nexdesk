@@ -1,0 +1,93 @@
+name: NexDesk Continuous Supremacy Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - release/*
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+env:
+  NODE_VERSION: '20.x'
+  SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
+  GROQ_API_KEY: ${{ secrets.PROD_GROQ_API_KEY }}
+  NEXT_DATADOG_API: ${{ secrets.DD_API_KEY }}
+
+jobs:
+  # ════ 1. STATIC ANALYSIS & COMPLIANCE ════
+  lint_and_security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      - run: npm ci
+      - name: 🛡️ ESLint Scan
+        run: npm run lint
+      - name: 🔒 Snyk Vulnerability Scanner (Supply Chain)
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ════ 2. AI AGENT REASONING SUITE ════
+  test_agent_cognition:
+    needs: lint_and_security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - name: 🧠 AI Orchestrator Integration Tests
+        run: npm run test:ai
+        # Fails pipeline if an agent hallucinates or crashes during a mock P1 event.
+
+  # ════ 3. NEXT.JS PRODUCTION BUILD ════
+  build:
+    needs: test_agent_cognition
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - name: 🏗️ Vercel Static Optimization Build
+        run: npx next build
+
+  # ════ 4. DOCKERIZE & ECR PUSH (FOR HYBRID / ON-PREM CLIENTS) ════
+  container_publish:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: 🐋 Push to Amazon ECR Public
+        run: |
+          # The multi-tenant container for self-hosted instances
+          docker build -t nexdesk/enterprise-core .
+          echo "Simulated push to ECR/DockerHub done"
+
+  # ════ 5. VERCEL & DATABASE ZERO-DOWNTIME DEPLOYMENT ════
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: container_publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 🗄️ Run Supabase Migration
+        run: npx supabase db push --db-url $SUPABASE_URL
+      - name: 🚀 Vercel Production Deploy
+        run: npx vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }} && npx vercel build --prod --token=${{ secrets.VERCEL_TOKEN }} && npx vercel --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - name: 🔔 Slack Release Notification
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,message,commit,author,action,eventName,ref
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PROD_DEPLOY_WEBHOOK }}

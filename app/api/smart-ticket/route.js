@@ -42,3 +42,4 @@ Context: This is a mutual fund app. Common services: BSE API, NSE API, Razorpay 
     return NextResponse.json({ suggestions: null })
   }
 }
+

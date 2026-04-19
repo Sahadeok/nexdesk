@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { createClient, getCurrentUserProfile } from '../../../lib/supabase'
 import { STATUS_CONFIG, PRIORITY_CONFIG, getSLAStatus } from '../../../lib/ticketRouter'
+import ForensicPilot from '../../../components/agents/ForensicPilot'
 
 const CAN_ACTION = ['ADMIN','IT_MANAGER','L1_AGENT','L2_AGENT','DEVELOPER']
 
@@ -149,7 +150,7 @@ export default function TicketDetail() {
   const isDev    = role === 'DEVELOPER'
   const isL1     = role === 'L1_AGENT'
   const isL2     = role === 'L2_AGENT'
-  const isAdmin  = ['ADMIN','IT_MANAGER'].includes(role)
+  const isAdmin  = ['SUPER_ADMIN','ADMIN','IT_MANAGER'].includes(role)
   const tc = ticket.assigned_team==='L2'?{c:'#a78bfa',bg:'#2e1065'}:ticket.assigned_team==='DEVELOPER'?{c:'#06b6d4',bg:'#083344'}:{c:'#60a5fa',bg:'#1e3a5f'}
 
   return (
@@ -191,6 +192,16 @@ export default function TicketDetail() {
 
         <div style={{ display:'grid', gridTemplateColumns:'1fr 320px', gap:20, alignItems:'start' }}>
           <div>
+            {/* ── PHASE 31: FORENSIC SUBAGENT (L3 DEV ONLY) ── */}
+            {(isDev || isAdmin) && isOpen && (
+              <div style={{ marginBottom: 20 }}>
+                <ForensicPilot 
+                  ticketId={ticketId} 
+                  onInvestigationComplete={() => { loadTicket(); loadHistory(); }}
+                />
+              </div>
+            )}
+
             {/* Description */}
             {ticket.description && (
               <div style={{ background:'#111827', border:'1px solid #1f2d45', borderRadius:14, padding:'20px 24px', marginBottom:16 }}>

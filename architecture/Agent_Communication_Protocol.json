@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "NexDesk Agent-to-Agent Communication Protocol (A2A)",
+  "description": "Standardized JSON envelope for how autonomous AI agents within the NexDesk ecosystem negotiate, delegate, and resolve complex IT problems without human intervention.",
+  "type": "object",
+  "required": ["envelope", "sender", "recipient", "payload", "cryptography"],
+  "properties": {
+    "envelope": {
+      "type": "object",
+      "properties": {
+        "message_id": { "type": "string", "example": "msg_01J9D4K9X2B" },
+        "timestamp_utc": { "type": "string", "format": "date-time" },
+        "priority": { "enum": ["P1_CRITICAL", "P2_HIGH", "P3_ROUTINE", "P4_BACKGROUND"] },
+        "intent_verb": { 
+          "enum": ["DIAGNOSE", "MITIGATE", "DELEGATE", "VOTE", "INFORM", "ROLLBACK"],
+          "description": "The explicit action being requested of the receiving agent."
+        },
+        "deadline_ms": { "type": "integer", "description": "Absolute epoch timeout for the receiving agent to respond." }
+      }
+    },
+    "sender": {
+      "type": "object",
+      "properties": {
+        "agent_id": { "type": "string", "example": "agn_L3_network_orchestrator" },
+        "capabilities": { "type": "array", "items": { "type": "string" }, "example": ["BGP_ANALYSIS", "ROUTER_REBOOT"] },
+        "confidence_score": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+    "recipient": {
+      "type": "object",
+      "properties": {
+        "target_agent_id": { "type": "string", "example": "agn_L2_database_specialist", "description": "Can be explicitly addressed..." },
+        "target_capability": { "type": "string", "example": "POSTGRES_DEADLOCK_KILLER", "description": "...or broadcasted to any agent matching this skill." }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "context_window": {
+          "type": "string",
+          "description": "The compressed state of the universe (logs, error spikes) leading to this message."
+        },
+        "proposed_action_plan": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Step-by-step mitigation plan proposed by the sender. Receiver must VOTE or EXECUTE."
+        },
+        "blast_radius_estimate": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Which downstream CMDB assets will break if the proposed action is taken."
+        }
+      }
+    },
+    "cryptography": {
+      "type": "object",
+      "properties": {
+        "lattice_signature": {
+          "type": "string",
+          "description": "Post-quantum digital signature proving message authenticity."
+        },
+        "blockchain_audit_hash": {
+          "type": "string",
+          "description": "The SHA-256 hash anchoring this dialogue into the immutable ITIL ledger (Phase 59)."
+        }
+      }
+    }
+  }
+}

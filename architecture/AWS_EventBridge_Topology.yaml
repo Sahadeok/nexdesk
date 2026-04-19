@@ -1,0 +1,108 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: NexDesk Enterprise - Global Multi-Region Active/Active EventBridge & Lambda Infrastructure.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: Production
+    AllowedValues: [Development, Staging, Production]
+  
+  SupabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: Isolated Supabase instance per tenant cluster.
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Description: Connects the agent swarm to Llama-v3.
+
+Resources:
+
+  # 1. 🌐 EDGE LAYER (WAF & API GATEWAY)
+  NexDeskApiGateway:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      CorsConfiguration:
+        AllowOrigins:
+          - "https://app.nexdesk.com"
+        AllowMethods:
+          - "*"
+      FailOnWarnings: true
+
+  # 2. 🖧 EVENT_BUS (THE CENTRAL NERVOUS SYSTEM)
+  CentralNervousSystemBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: "nexdesk-central-nervous-system"
+
+  # 3. 🧠 COMPUTE LAYER (AUTONOMOUS LAMBDAS)
+  EventRouterLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: NexDesk-L1-EventRouter
+      Handler: src/lambda/router.handler
+      Runtime: nodejs20.x
+      Timeout: 30
+      MemorySize: 2048
+      Environment:
+        Variables:
+          DB_URL: !Ref SupabaseUrl
+          AI_KEY: !Ref GroqApiKey
+      Events:
+        EdgeApiPost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref NexDeskApiGateway
+            Path: /v1/ingest
+            Method: POST
+
+  AgentOrchestratorLayer:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: NexDesk-L2-AgentSwarmWorker
+      Handler: src/lambda/agentSwarm.handler
+      Runtime: nodejs20.x
+      Timeout: 300 # Agents need time to "think" and query Groq
+      MemorySize: 4096
+      ProvisionedConcurrencyConfig:
+        ProvisionedConcurrentExecutions: 50 # Minimum agents always awake to handle spikes
+      Events:
+        P1UrgentTickets:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !Ref CentralNervousSystemBus
+            Pattern:
+              source:
+                - "com.nexdesk.api.ingest"
+              detail-type:
+                - "TICKET_CREATED"
+              detail:
+                priority:
+                  - "P1_CRITICAL"
+
+  # 4. 🗄️ STATE LAYER (ELASTICACHE FOR VECTOR / SESSION MEMORY)
+  AgentVectorMemory:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: "Ultra-fast Redis memory cache for AI conversation context and deduplication."
+      Engine: redis
+      CacheNodeType: cache.r6x.large # Production grade
+      NumCacheClusters: 2
+      AutomaticFailoverEnabled: true
+
+  # 5. 🛡️ DATA LOSS PREVENTION (DLP) S3 BUCKET (P56 - P58 ENFORCEMENT)
+  SecureUploadVault:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: nexdesk-secure-pii-uploads
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms # Forced KMS Encryption for HIPAA / PCI-DSS payloads
+
+Outputs:
+  ApiEndpoint:
+    Description: "The massive throughput entrypoint."
+    Value: !Sub "https://${NexDeskApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"

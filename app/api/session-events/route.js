@@ -122,3 +122,4 @@ async function updateSessionSummary(supabase, sessionId, newEvents) {
     }
   }
 }
+
