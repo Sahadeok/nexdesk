@@ -68,7 +68,7 @@ export default function L1Dashboard() {
               <div style={{ fontSize:11, color:'#64748b', marginTop:1 }}>{label}</div>
             </div>
           ))}
-        </div>
+        </div>y
 
         {/* Filters */}
         <div style={{ display:'flex', gap:8, marginBottom:20, flexWrap:'wrap' }}>
